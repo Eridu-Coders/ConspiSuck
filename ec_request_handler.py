@@ -21,6 +21,12 @@ class EcRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     @classmethod
     def init_class(cls, p_app):
+        """
+        Initialize the class.
+
+        :param p_app: Handle on the application.
+        :return:
+        """
         l_logger = logging.getLogger('EcRequestHandler_Init')
 
         l_logger.info("Initializing EcRequestHandler class")

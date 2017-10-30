@@ -27,10 +27,10 @@ class EcLogger(logging.Logger):
     #: static variable containing the root logger.
     cm_logger = None
 
-    # connection pool for logging purposes
+    #: connection pool for logging purposes.
+    cm_pool = None
     # the logging system uses a separate connection pool and it is an ordinary psycopg pool because there is
     # no concern that connections might get lost
-    cm_pool = None
 
     @classmethod
     def root_logger(cls):
@@ -46,7 +46,7 @@ class EcLogger(logging.Logger):
         the logging level according to :any:`gcm_verboseModeOn` and :any:`gcm_debugModeOn`.
 
         :param str p_name: Name to append to the logger name (+ '.p_name'). If ``None`` then
-            the logger name is just the app name (``gcm_appName``)
+            the logger name is just the app name (:any:`gcm_appName`)
         :param p_level: optional level setting (never used)
         :type p_level: `logging level <https://docs.python.org/3.5/library/logging.html#logging-levels>`_
 
@@ -270,8 +270,8 @@ class EcMailer(threading.Thread):
     * Gmail (TLS auth)
     * Ordinary SMTP without authentication.
 
-    The type of server is determined by :any:`LocalParam.gcm_amazonSmtp` (true for AWS) and
-    :any:`LocalParam.gcm_gmailSmtp` (true for Gmail)
+    The type of server is determined by :any:`gcm_amazonSmtp` (true for AWS) and
+    :any:`gcm_gmailSmtp` (true for Gmail)
 
     For an Amazon SES howto, see this
     `blog page <http://blog.noenieto.com/blog/html/2012/06/18/using_amazon_ses_with_your_python_applications.html>`_
@@ -287,7 +287,7 @@ class EcMailer(threading.Thread):
     #: because each mail sending operation is executed asynchronously in its own thread
     cm_mutexGovernor = None
 
-    #: Concurrency management lock to control access to the log files (see :any:`sendMail`). This is necessary
+    #: Concurrency management lock to control access to the log files (see :any:`send_mail`). This is necessary
     #: because each mail sending operation is executed asynchronously in its own thread
     cm_mutexFiles = None
 
@@ -308,17 +308,17 @@ class EcMailer(threading.Thread):
         blocking the main application flow while waiting for the SMTP server to respond.
 
         Every sent message goes into a text file
-        (same path as :any:`EcAppParam.gcm_logFile` but with 'all_msg' at the end instead of 'csv')
+        (same path as :any:`gcm_logFile` but with 'all_msg' at the end instead of 'csv')
 
         Ensures that no more than 10 message with the same subject are sent every 5 minutes
         (using :any:`cm_sendMailGovernor`) Beyond this, the messages are not sent but stored in the overflow file
-        (same path as :any:`EcAppParam.gcm_logFile` but with 'overflow_msg' at the end instead of 'csv')
+        (same path as :any:`gcm_logFile` but with 'overflow_msg' at the end instead of 'csv')
 
         Errors encountered during processing are stored in a dedicated file (same path as
-        :any:`EcAppParam.gcm_logFile` but with `'smtp_error'` at the end instead of `'csv'`)
+        :any:`gcm_logFile` but with `'smtp_error'` at the end instead of `'csv'`)
         This file is in CSV format so that it can be merged with the main CSV log file.
         Yet another file receives the messages which could not ne sent due to these errors (same path as
-        :any:`EcAppParam.gcm_logFile` but with 'rejected_msg' at the end instead of 'csv')
+        :any:`gcm_logFile` but with 'rejected_msg' at the end instead of 'csv')
 
         All these files are appended to only (open mode ``'a'``) Nothing is ever removed from them. Any
         write access to them is protected by a mutex because of the asynchronous nature of the operations (several
@@ -332,10 +332,10 @@ class EcMailer(threading.Thread):
 
     def __init__(self, p_subject, p_message):
         """
-        preparing the thread to be launched (by :any:`sendMail`)
+        Setting up the thread to be launched (by :any:`send_mail`)
 
-        :param p_subject: same as in :any:`sendMail`
-        :param p_message: same as in :any:`sendMail`
+        :param p_subject: same as in :any:`send_mail`
+        :param p_message: same as in :any:`send_mail`
         """
         self.m_subject = p_subject
         self.m_message = p_message
@@ -545,9 +545,9 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
         """
         Creates the member attributes needed for debug purposes:
 
-        * `m_connectionRegister`: list of all db connections "out there"
-        * `m_getCalls` number of calls to :any:`EcConnectionPool.getconn`
-        * `m_putCalls` number of calls to :any:`EcConnectionPool.putconn`
+        * :any:`m_connectionRegister`: list of all db connections "out there"
+        * :any:`m_getCalls` number of calls to :any:`EcConnectionPool.getconn`
+        * :any:`m_putCalls` number of calls to :any:`EcConnectionPool.putconn`
 
         :param p_minconn: Minimum number of connections
             (parameter of `ThreadedConnectionPool <http://pythonhosted.org/psycopg2/pool.html>`_ constructor).
@@ -564,9 +564,15 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
             repr(args), repr(kwargs)
         ))
 
+        #: list of all db connections "out there"
         self.m_connectionRegister = []
+
+        #: number of calls to :any:`EcConnectionPool.getconn`
         self.m_getCalls = 0
+
+        #: number of calls to :any:`EcConnectionPool.putconn`
         self.m_putCalls = 0
+
         super().__init__(p_minconn, p_maxconn, *args, **kwargs)
 
     # noinspection PyMethodOverriding
@@ -580,7 +586,7 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
 
         * increment the `m_getCalls` counter.
         * pass the debug data string to the newly available connection.
-        * adds the connection to 'm_connectionRegister'.
+        * adds the connection to :any:`m_connectionRegister`.
 
         :param p_debug_data: An identification string for debug purposes.
         :param p_key: parameter of the parent class method.
@@ -604,8 +610,8 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
 
         Beyond calling the method from the parent class, this method does the following:
 
-        * increment the `m_putCalls` counter.
-        * remove the connection from 'm_connectionRegister'.
+        * increment the :any:`m_putCalls` counter.
+        * remove the connection from :any:`m_connectionRegister`.
 
         """
         # why do I get a PyCharm warning here ?!
@@ -623,7 +629,7 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
 
     def connection_report(self):
         """
-        Uses the debug data contained in all outstanding connections (listed in `m_connectionRegister`)
+        Uses the debug data contained in all outstanding connections (listed in :any:`m_connectionRegister`)
         to produce a report string (1 connection per line).
 
         :return: The report string.
@@ -657,13 +663,19 @@ class EcConnection(psycopg2.extensions.connection):
         * assigns the string 'Fresh' to `m_debugData` (so that if a connection is later seen with this string, it means
             that it was not obtained through the pool -- see :any:`EcConnectionPool.getconn` )
         * assigns the current date/time to `m_creationDate`
-        * assigns a new ID to `m_connectionID` and increments `EcConnection.cm_IDCounter`
+        * assigns a new ID to :any:`m_connectionID` and increments :any:`EcConnection.cm_IDCounter`
 
         :param dsn: parameter of the parent constructor.
         :param more: parameter of the parent constructor.
         """
+
+        #: Debug data string. Initial state `'Fresh'`. After use: `'Used'`
         self.m_debugData = 'Fresh'
+
+        #: Self explanatory
         self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
+
+        #: Self explanatory
         self.m_connectionID = EcConnection.cm_IDCounter
         EcConnection.cm_IDCounter += 1
 
@@ -674,7 +686,7 @@ class EcConnection(psycopg2.extensions.connection):
         """
         A property to get and set the debug data. When, setting, it simply results in an assignment to `m_debugData`
         but when getting, the attribute returns a descriptive string containing the ID and the creation date in
-        addition to the debug data proper. This string is used to create :any:`EcConnectionPool.connectionReport`
+        addition to the debug data proper. This string is used to create :any:`EcConnectionPool.connection_report`
         """
         return '[{0}] {1}-{2}'.format(self.m_connectionID, self.m_creationDate, self.m_debugData)
 

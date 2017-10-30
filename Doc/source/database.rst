@@ -12,8 +12,13 @@ DB Connexion
 .. autoclass:: EcConnectionPool
    :members:
 
+   .. automethod:: __init__
+
 .. autoclass:: EcConnection
    :members:
+
+   .. automethod:: __init__
+
 
 Common Tables
 -------------

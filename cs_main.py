@@ -67,7 +67,7 @@ class CsBackgroundTask(threading.Thread):
     @staticmethod
     def internet_check():
         """
-        Presence of internet connection verification. Uses :any:`CsBackgroundTask.getOwnIp`
+        Presence of internet connection verification. Uses :any:`CsBackgroundTask.get_own_ip()`
 
         :return: `True` if internet can be reached. `False` otherwise.
         """

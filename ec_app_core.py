@@ -21,17 +21,22 @@ class EcAppCore(threading.Thread):
         * Start the connection pool.
         * Test the DB connection by storing a startup message in `TB_EC_MSG`.
         * Start the health check thread.
+
+        **NB** The health check thread is actually no longer started here but placed under the
+        responsibility of the implementation app. The reason fo this is that the app may need to be instantiated
+        before it is sensible to start the thread (30/10/2017).
         """
         super().__init__(daemon=True)
 
         # bogus variable introduced to avoid a PEP-8 pedantic complaint in get_response
         self.m_rq = None
 
-        # logger
+        #: logger
         self.m_logger = logging.getLogger('AppCore')
 
         # connection pool init
         try:
+            #: The pool
             self.m_connectionPool = EcConnectionPool.get_new()
         except Exception as e:
             self.m_logger.warning('Unable to start Connection pool: {0}-{1}'.format(
@@ -85,27 +90,43 @@ class EcAppCore(threading.Thread):
         self.m_connectionPool.putconn(l_conn)
         self.m_logger.info('Successful TB_EC_MSG insert - The DB appears to be working')
 
-        # health check counter
+        #: health check counter. Number of calls to :any:`EcConnectionPool.getconn`
         self.m_hcCounter = 0
 
-        # starts the refresh thread
+        #: One letter thread name (member inherited from thread class :any:`threading.Thread`)
         self.name = 'S'
-        # placed under the responsibility of the implementation app
+
+        # Thread start placed under the responsibility of the implementation app (30/06/2017)
         # self.start()
 
-    #: Connection pool access
     def get_connection_pool(self):
+        """
+        Connection pool access.
+
+        :return: :any:`m_connectionPool`
+        """
         return self.m_connectionPool
 
-    #: Main application entry point - App response to an HTTP POST request
     def get_response_post(self, p_requestHandler, p_postData):
+        """
+        Main application entry point - App response to an HTTP POST request (must be reimplemented by actual app)
+
+        :param p_requestHandler: The request handler (see :any:`EcRequestHandler`) containing the request info.
+        :param p_postData: The post data received from the caller.
+        :return: A warning JSON string indicating that this method should not be called directly but be subclassed.
+        """
         # completely useless line. Only there to avoid PEP-8 pedantic complaint
         self.m_rq = p_requestHandler
 
         return '{"status":"FAIL", "message":"You should never see this. If you do then things are really wrong"}'
 
-    #: Main application entry point - App response to an HTTP GET request
     def get_response_get(self, p_request_handler):
+        """
+        Main application entry point - App response to an HTTP GET request (must be reimplemented by actual app)
+
+        :param p_request_handler: The request handler (see :any:`EcRequestHandler`) containing the request info.
+        :return: A warning HTML string indicating that this method should not be called directly but be subclassed.
+        """
         # completely useless line. Only there to avoid PEP-8 pedantic complaint
         self.m_rq = p_request_handler
 
@@ -125,8 +146,12 @@ class EcAppCore(threading.Thread):
         status report.
 
         Every tenth time (once in 5 min.) a full recording of system parameters is made through
-        `psutil <https://pythonhosted.org/psutil/>`_ and stored in `TB_MSG`.
+        `psutil <http://psutil.readthedocs.io/en/latest/>`_ and stored in `TB_MSG`.
         """
+
+        # builds a thread list representation string of the form: XXXXX-aaaaa/bbbbb/cccc where the Xs are
+        # the one-letter names of the application's threads and aaaa, bbbb, ... are the names of any other
+        # threads, if any. The main thread of the application is represented as 'M'
         l_thread_list_letter = []
         l_thread_list_other = []
         for t in threading.enumerate():
@@ -140,17 +165,20 @@ class EcAppCore(threading.Thread):
         l_thread_list_other.sort()
         l_thread_list = '[{0}]-[{1}]'.format(''.join(l_thread_list_letter), '/'.join(l_thread_list_other))
 
+        # get list of memory metrics from psutil (http://psutil.readthedocs.io/en/latest/#memory)
         l_mem = psutil.virtual_memory()
 
+        # display available ram + thread list
         self.m_logger.info(('System Health Check - Available RAM: {0:.2f} Mb ({1:.2f} % usage) ' +
                             'Threads: {2}').format(
             l_mem.available / (1024 * 1024), l_mem.percent, l_thread_list))
 
+        # if used RAM over 75% --> issue warning
         if l_mem.percent >= 75.0:
             self.m_logger.warning('System Health Check ALERT - Available RAM: {0:.2f} Mb ({1:.2f} % usage)'.format(
                 l_mem.available / (1024 * 1024), l_mem.percent))
 
-        # full system resource log every 5 minutes
+        # full system resource log into TB_EC_MSG every 5 minutes (once out of 10 calls)
         if self.m_hcCounter % 10 == 0:
             l_cpu = psutil.cpu_times()
             l_swap = psutil.swap_memory()
@@ -204,7 +232,7 @@ class EcAppCore(threading.Thread):
 
         self.m_hcCounter += 1
 
-    #: System health check and app monitoring thread
+    #: System health check and app monitoring thread (to be launched by the actual application)
     def run(self):
         self.m_logger.info('System health check thread started ...')
         while True:

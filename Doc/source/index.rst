@@ -30,6 +30,10 @@ Application Startup
 .. autoclass:: StartApp
    :members:
 
+.. autoclass:: ThreadedHTTPServer
+   :members:
+
+
 Application Class
 -----------------
 

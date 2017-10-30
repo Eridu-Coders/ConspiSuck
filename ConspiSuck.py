@@ -13,7 +13,9 @@ from socketserver import ThreadingMixIn
 
 # Multi-threaded HTTP server according to https://pymotw.com/2/BaseHTTPServer/index.html#module-BaseHTTPServer
 class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
-    """Handles requests in a separate thread each."""
+    """
+    Handles requests in a separate thread each.
+    """
 
 
 class StartApp:
@@ -26,9 +28,9 @@ class StartApp:
         """
         The actual entry point, called from ``if __name__ == "__main__":``. Does the following:
 
-        #. Initialises the mailer (:any:`EcMailer.initMailer`)
+        #. Initialises the mailer (:any:`EcMailer.init_mailer`)
         #. Test the availability of the database connection.
-        #. Initialises the logging system (:any:`EcLogger.logInit`)
+        #. Initialises the logging system (:any:`EcLogger.log_init`)
         #. Instantiates the application class (:any:`CsApp`). This launches the background stories-downloading
            threads.
         #. Initialises the request handler class (:any:`EcRequestHandler.init_class`), passing it a handle 
@@ -36,8 +38,9 @@ class StartApp:
         #. Instantiates the standard Python HTTP server class (:any:`ThreadedHTTPServer`). The request handler
            class will be instantiated by this class and a handle to it is therefore passed to it.
         #. Set up the appropriate locale (for proper date format handling)
-        #. Launches the server (:any:`l_httpd.serve_forever`)
-        
+        #. Launches the server (the method `serve_forever()` of subclass
+           :any:`http.server.HTTPServer` of :py:class:`socketserver.BaseServer`)
+
         The dependencies between the main application classes is as follows:
 
         HTTP server: one instance "running forever"
