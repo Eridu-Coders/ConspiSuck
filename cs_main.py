@@ -90,8 +90,8 @@ class CsBackgroundTask(threading.Thread):
         """
 
         # Spell Checker should not complain ... Grrrr
-        l_long_token = 'EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU' \
-            '49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD'
+        l_long_token = "EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU" \
+                       "49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD"
         l_long_token_expiry = datetime.datetime.strptime('21/12/2017', '%d/%m/%Y')
 
         # Make sure internet is accessible and wait otherwise
@@ -124,7 +124,9 @@ class CsBackgroundTask(threading.Thread):
 
         # Launch one bulk download procedure
         try:
+            self.m_bulk.start_threads()
             self.m_bulk.bulk_download()
+            self.m_bulk.stop_threads()
         except Exception as e:
             self.m_logger.warning('Serious exception - Raising: ' + repr(e))
             raise

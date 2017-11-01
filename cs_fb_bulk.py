@@ -26,49 +26,55 @@ class BulkDownloaderException(Exception):
     def __init__(self, p_msg):
         self.m_msg = p_msg
 
+
 class BulkDownloader:
     """
     Bogus class used to isolate the bulk downloading (FB API) features.
     """
     def __init__(self, p_pool, p_long_token, p_long_token_expiry, p_background_task):
-        # Local copy of the browser Driver
+        #: Local copy of the FB long-duration access token.
         self.m_long_token = p_long_token
+
+        #: Local copy of the FB long-duration access token expiry date
         self.m_long_token_expiry = p_long_token_expiry
+
+        #: Local copy of the background task class instance to allow calling its methods.
         self.m_background_task = p_background_task
 
         #: Connection pool
         self.m_pool = p_pool
 
-        # instantiates class logger
+        #: Class-specific logger
         self.m_logger = logging.getLogger('BulkDownloader')
 
-        # number of times an object store has been attempted
+        #: Number of times an object storage operation has been attempted
         self.m_objectStoreAttempts = 0
 
-        # number of objects actually stored
+        #: Number of objects stored successfully
         self.m_objectStored = 0
 
+        #: Number of posts retrieved
         self.m_postRetrieved = 0
+
+        #: Number of comments retrieved
         self.m_commentRetrieved = 0
 
-        # number of requests performed
+        #: Number of FB API requests performed
         self.m_FBRequestCount = 0
 
-        # current page being downloaded
+        #: Name of current page being downloaded
         self.m_page = None
 
-        # Launch OCR thread
-        if EcAppParam.gcm_ocr_thread:
-            self.m_logger.info('starting Image ocr thread ....')
-            t1 = Thread(target=self.repeat_ocr_image)
-            t1.name = 'O'
-            t1.start()
-            self.m_logger.info('Image OCR thread started')
+        #: OCR Thread
+        self.m_ocr_thread = None
 
-        # boolean variable controlling the fetch image thread
-        self.m_fetch_proceed = True
+        #: Image fetching Thread
+        self.m_image_fetch_thread = None
 
-        # dictionary of UNICODE ligatures, to make sure none are kept in OCR text
+        #: Boolean variable controlling the threads. When `False`, all threads stop.
+        self.m_threads_proceed = True
+
+        #: Bictionary of UNICODE ligatures, to make sure none are kept in OCR text
         self.m_lig_dict = {
             'Ꜳ': 'AA',
             'ꜳ': 'aa',
@@ -131,37 +137,71 @@ class BulkDownloader:
             'ꝡ': 'vy',
         }
 
+    def start_threads(self):
+        """
+        Thread Launching.
+
+        :return: Nothing
+        """
+        # OCR Thread
+        if EcAppParam.gcm_ocr_thread:
+            self.m_logger.info('starting Image ocr thread ....')
+            self.m_ocr_thread = Thread(target=self.repeat_ocr_image)
+            # One-letter name for the OCR thread
+            self.m_ocr_thread.name = 'O'
+            self.m_ocr_thread.start()
+            self.m_logger.info('Image OCR thread started')
+
+        # Image fetching thread
+        self.m_image_fetch_thread = Thread(target=self.repeat_fetch_images)
+        # One-letter name for the Image thread
+        self.m_image_fetch_thread.name = 'I'
+        self.m_image_fetch_thread.start()
+        self.m_logger.info('Image fetch thread launched')
+
+    def stop_threads(self):
+        """
+        Stops all threads.
+
+        :return: Nothing.
+        """
+
+        # Positioning this flag will stop all threads (hopefully).
+        self.m_threads_proceed = False
+
+        # stopping OCR thread
+        self.m_ocr_thread.join()
+        if self.m_ocr_thread.is_alive():
+            self.m_logger.critical('Could not stop ocr thread ....')
+            exit(0)
+
+        # stopping OCR thread
+        self.m_image_fetch_thread.join()
+        if self.m_image_fetch_thread.is_alive():
+            self.m_logger.critical('Could not stop image fetch thread ....')
+            exit(0)
+
     def bulk_download(self):
         """
-        Performs the bulk-downloading tasks.
+        Performs the core of the bulk-downloading tasks: New pages and new posts downloading.
         
         :return: Nothing
         """
         self.m_logger.info('Start bulk_download()')
 
-        #self.m_logger.info('Getting FB token')
-        #self.m_browserDriver.get_fb_token()
+        # self.m_logger.info('Getting FB token')
+        # self.m_browserDriver.get_fb_token()
 
-        self.m_fetch_proceed = True
-        t1 = Thread(target=self.repeat_fetch_images)
-        t1.name = 'I'
-        t1.start()
-        self.m_logger.info('Image fetch thread launched')
-
-        self.getPages()
-        self.get_posts()
-        self.updatePosts()
-        self.getLikesDetail()
-
-        self.m_fetch_proceed = False
-
-        #t1.join()
+        self.get_pages()
+        # self.get_posts()
+        # self.updatePosts()
+        # self.getLikesDetail()
 
         self.m_logger.info('End bulk_download()')
 
-    def getPages(self):
+    def get_pages(self):
         """
-        Gets the page list from likes list of the operating user.
+        Gets the page list from shares posted to TestPage.
 
         :return: Nothing
         """
@@ -243,8 +283,11 @@ class BulkDownloader:
         To transfer from :any:`TB_OBJ` to :any:`TB_PAGES`:
         .. code-block:: sql
 
+            delete from "TB_PAGES";
             insert into "TB_PAGES"("ID","DT_CRE","ST_TYPE","ST_FB_TYPE","TX_NAME","ID_OBJ_INTERNAL")
-            select "ID","DT_CRE","ST_TYPE","ST_FB_TYPE","TX_NAME","ID_INTERNAL" from "TB_OBJ" where "ST_TYPE" = 'Page';
+            select "ID","DT_CRE","ST_TYPE","ST_FB_TYPE","TX_NAME","ID_INTERNAL"
+            from "TB_OBJ"
+            where "ST_TYPE" = 'Page';
         
         :return: Nothing
         """
@@ -279,7 +322,7 @@ class BulkDownloader:
         :return: Nothing 
         """
         self.m_logger.info('Start repeat_fetch_images()')
-        while self.m_fetch_proceed:
+        while self.m_threads_proceed:
             self.fetch_images()
             time.sleep(10)
 
@@ -338,7 +381,7 @@ class BulkDownloader:
                     if self.m_background_task.internet_check():
                         l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
                         self.m_logger.warning(l_msg)
-                        raise BulkDownloaderException(l_msg)
+                        # raise BulkDownloaderException(l_msg)
                     else:
                         self.m_logger.info('Internet Down. Waiting ...')
                         time.sleep(5 * 60)
@@ -422,7 +465,7 @@ class BulkDownloader:
         :return: Nothing
         """
         self.m_logger.info('Start repeat_ocr_image()')
-        while True:
+        while self.m_threads_proceed:
             self.ocr_images()
             time.sleep(30)
 

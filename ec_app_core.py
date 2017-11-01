@@ -28,8 +28,9 @@ class EcAppCore(threading.Thread):
         """
         super().__init__(daemon=True)
 
-        # bogus variable introduced to avoid a PEP-8 pedantic complaint in get_response
+        # bogus variables introduced to avoid a PEP-8 pedantic complaint in get_response
         self.m_rq = None
+        self.m_pd = None
 
         #: logger
         self.m_logger = logging.getLogger('AppCore')
@@ -107,16 +108,17 @@ class EcAppCore(threading.Thread):
         """
         return self.m_connectionPool
 
-    def get_response_post(self, p_requestHandler, p_postData):
+    def get_response_post(self, p_request_handler, p_post_data):
         """
         Main application entry point - App response to an HTTP POST request (must be reimplemented by actual app)
 
-        :param p_requestHandler: The request handler (see :any:`EcRequestHandler`) containing the request info.
-        :param p_postData: The post data received from the caller.
+        :param p_request_handler: The request handler (see :any:`EcRequestHandler`) containing the request info.
+        :param p_post_data: The post data received from the caller.
         :return: A warning JSON string indicating that this method should not be called directly but be subclassed.
         """
-        # completely useless line. Only there to avoid PEP-8 pedantic complaint
-        self.m_rq = p_requestHandler
+        # completely useless 2 lines. Only there to avoid PEP-8 pedantic complaint
+        self.m_rq = p_request_handler
+        self.m_pd = p_post_data
 
         return '{"status":"FAIL", "message":"You should never see this. If you do then things are really wrong"}'
 
@@ -150,7 +152,7 @@ class EcAppCore(threading.Thread):
         """
 
         # builds a thread list representation string of the form: XXXXX-aaaaa/bbbbb/cccc where the Xs are
-        # the one-letter names of the application's threads and aaaa, bbbb, ... are the names of any other
+        # the one-letter names of the application's threads and aaaaa, bbbbb, ... are the names of any other
         # threads, if any. The main thread of the application is represented as 'M'
         l_thread_list_letter = []
         l_thread_list_other = []
@@ -182,9 +184,9 @@ class EcAppCore(threading.Thread):
         if self.m_hcCounter % 10 == 0:
             l_cpu = psutil.cpu_times()
             l_swap = psutil.swap_memory()
-            l_diskRoot = psutil.disk_usage('/')
+            l_disk_root = psutil.disk_usage('/')
             l_net = psutil.net_io_counters()
-            l_processCount = len(psutil.pids())
+            l_process_count = len(psutil.pids())
 
             # log message in TB_EC_MSG
             l_conn = psycopg2.connect(
@@ -216,7 +218,7 @@ class EcAppCore(threading.Thread):
                     'check_system_health',
                     0,
                     'MEM: {0}/CPU: {1}/SWAP: {2}/DISK(root): {3}/NET: {4}/PROCESSES: {5}'.format(
-                        l_mem, l_cpu, l_swap, l_diskRoot, l_net, l_processCount
+                        l_mem, l_cpu, l_swap, l_disk_root, l_net, l_process_count
                     )
                 ))
                 l_conn.commit()
@@ -243,7 +245,7 @@ class EcAppCore(threading.Thread):
             self.check_system_health()
 
             # output a full connection pool usage report
-            l_fLogName = re.sub('\.csv', '.all_connections', EcAppParam.gcm_logFile)
-            l_fLog = open(l_fLogName, 'w')
-            l_fLog.write(self.m_connectionPool.connection_report())
-            l_fLog.close()
+            l_f_log_name = re.sub('\.csv', '.all_connections', EcAppParam.gcm_logFile)
+            l_f_log = open(l_f_log_name, 'w')
+            l_f_log.write(self.m_connectionPool.connection_report())
+            l_f_log.close()
