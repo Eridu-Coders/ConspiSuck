@@ -120,7 +120,7 @@ class StartApp:
         EcLogger.cm_logger.warning('Server up and running at [{0}:{1}]'
                                    .format(EcAppParam.gcm_appDomain, str(EcAppParam.gcm_httpPort)))
 
-        # start all threads (the app's own maintenance thread and the background tasks thread)
+        # start all threads (the app's own maintenance thread and the background tasks threads)
         l_app.start_threads()
 
         try:

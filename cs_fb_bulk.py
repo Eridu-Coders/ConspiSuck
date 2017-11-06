@@ -65,16 +65,22 @@ class BulkDownloader:
         #: Name of current page being downloaded
         self.m_page = None
 
-        #: OCR Thread
-        self.m_ocr_thread = None
+        #: Posts update Thread
+        self.m_posts_update_thread = None
+
+        #: Likes details download Thread
+        self.m_likes_details_thread = None
 
         #: Image fetching Thread
         self.m_image_fetch_thread = None
 
+        #: OCR Thread
+        self.m_ocr_thread = None
+
         #: Boolean variable controlling the threads. When `False`, all threads stop.
         self.m_threads_proceed = True
 
-        #: Bictionary of UNICODE ligatures, to make sure none are kept in OCR text
+        #: Dictionary of UNICODE ligatures, to make sure none are kept in OCR text
         self.m_lig_dict = {
             'Ꜳ': 'AA',
             'ꜳ': 'aa',
@@ -143,6 +149,27 @@ class BulkDownloader:
 
         :return: Nothing
         """
+        # posts update thread
+        self.m_posts_update_thread = Thread(target=self.repeat_posts_update)
+        # One-letter name for the Image thread
+        self.m_posts_update_thread.name = 'U'
+        self.m_posts_update_thread.start()
+        self.m_logger.info('Posts update thread launched')
+
+        # posts update thread
+        self.m_likes_details_thread = Thread(target=self.repeat_get_likes_details)
+        # One-letter name for the Image thread
+        self.m_likes_details_thread.name = 'L'
+        self.m_likes_details_thread.start()
+        self.m_logger.info('Likes details thread launched')
+
+        # Image fetching thread
+        self.m_image_fetch_thread = Thread(target=self.repeat_fetch_images)
+        # One-letter name for the Image thread
+        self.m_image_fetch_thread.name = 'I'
+        self.m_image_fetch_thread.start()
+        self.m_logger.info('Image fetch thread launched')
+
         # OCR Thread
         if EcAppParam.gcm_ocr_thread:
             self.m_logger.info('starting Image ocr thread ....')
@@ -151,13 +178,6 @@ class BulkDownloader:
             self.m_ocr_thread.name = 'O'
             self.m_ocr_thread.start()
             self.m_logger.info('Image OCR thread started')
-
-        # Image fetching thread
-        self.m_image_fetch_thread = Thread(target=self.repeat_fetch_images)
-        # One-letter name for the Image thread
-        self.m_image_fetch_thread.name = 'I'
-        self.m_image_fetch_thread.start()
-        self.m_logger.info('Image fetch thread launched')
 
     def stop_threads(self):
         """
@@ -169,14 +189,14 @@ class BulkDownloader:
         # Positioning this flag will stop all threads (hopefully).
         self.m_threads_proceed = False
 
-        # stopping OCR thread
-        self.m_ocr_thread.join()
+        # stopping OCR thread (10 seconds timeout)
+        self.m_ocr_thread.join(10.0)
         if self.m_ocr_thread.is_alive():
             self.m_logger.critical('Could not stop ocr thread ....')
             exit(0)
 
-        # stopping OCR thread
-        self.m_image_fetch_thread.join()
+        # stopping OCR thread (10 seconds timeout)
+        self.m_image_fetch_thread.join(10.0)
         if self.m_image_fetch_thread.is_alive():
             self.m_logger.critical('Could not stop image fetch thread ....')
             exit(0)
@@ -194,56 +214,71 @@ class BulkDownloader:
 
         self.get_pages()
         # self.get_posts()
-        # self.updatePosts()
-        # self.getLikesDetail()
+        # self.update_posts()
+        # self.get_likes_detail()
 
         self.m_logger.info('End bulk_download()')
 
     def get_pages(self):
         """
-        Gets the page list from shares posted to TestPage.
+        Gets the page list from shares posted to TestPage. Each post to TestPage is a share of a post from a page.
 
         :return: Nothing
         """
         self.m_logger.info('Start getPages()')
 
-        # list of shared posts in TestPage feed
+        # This field list is far too wide but I keep it because it can be re-used.
+        l_field_list = \
+            'id,caption,created_time,description,from,icon,link,message,message_tags,name,object_id,' + \
+            'permalink_url,picture,place,properties,shares,source,status_type,story,to,type,' + \
+            'updated_time,with_tags,parent_id'
 
-        l_fieldList = 'id,caption,created_time,description,from,icon,link,message,message_tags,name,object_id,' + \
-                      'permalink_url,picture,place,properties,shares,source,status_type,story,to,type,' + \
-                      'updated_time,with_tags,parent_id'
+        # build the request
+        l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&access_token={3}&fields={4}'.format(
+            EcAppParam.gcm_api_version,
+            '706557539525134',  # FB ID of page 'TestPage'
+            EcAppParam.gcm_limit,
+            self.m_long_token,
+            l_field_list)
 
-        l_request = ('https://graph.facebook.com/{0}/{1}/feed?limit={2}&' +
-                     'access_token={3}&fields={4}').format(
-            EcAppParam.gcm_api_version, '706557539525134', EcAppParam.gcm_limit, self.m_long_token, l_fieldList)
+        # perform the request
         l_response = self.performRequest(l_request)
 
         self.m_logger.info('l_request:' + l_request)
-        # self.m_logger.info('l_response:' + l_response)
 
-        # each like is a page
-        l_responseData = json.loads(l_response)
+        # Decode the JSON response from the FB API
+        l_response_data = json.loads(l_response)
         l_finished = False
         while not l_finished:
-            for l_post in l_responseData['data']:
+            for l_post in l_response_data['data']:
+                # if there is a parent_id, it means that it is a share (or at least this is what we assume).
                 if 'parent_id' in l_post.keys():
                     l_parent_id = l_post['parent_id']
                     self.m_logger.info('l_parent_id:' + l_parent_id)
 
-                    l_request_post = ('https://graph.facebook.com/{0}/{1}?limit={2}&' +
-                                      'access_token={3}&fields={4}').format(
-                        EcAppParam.gcm_api_version, l_parent_id, EcAppParam.gcm_limit, self.m_long_token, l_fieldList)
-                    l_response_post = self.performRequest(l_request_post)
-                    # self.m_logger.info('l_response_post:' + l_response_post)
+                    # new request to get the parent post (the original post, not the share)
+                    l_request_post = \
+                        'https://graph.facebook.com/{0}/{1}?limit={2}&access_token={3}&fields={4}'.format(
+                            EcAppParam.gcm_api_version,
+                            l_parent_id,
+                            EcAppParam.gcm_limit,
+                            self.m_long_token,
+                            l_field_list)
 
+                    # perform the second request
+                    l_response_post = self.performRequest(l_request_post)
+
+                    # decode the JSON we got from the second request
                     l_response_post_data = json.loads(l_response_post)
+
+                    # since this should be a page post, the 'from' field identifies the page it has been posted to.
                     if 'from' in l_response_post_data.keys():
                         l_from = l_response_post_data['from']
                         l_page_id = l_from['id']
                         l_page_name = l_from['name']
 
-                        self.m_logger.info('id   :' + l_page_id)
-                        self.m_logger.info('name :' + l_page_name)
+                        self.m_logger.info('Page id   :' + l_page_id)
+                        self.m_logger.info('Page name :' + l_page_name)
 
                         # store page information
                         self.storeObject(
@@ -264,11 +299,12 @@ class BulkDownloader:
 
             # end of for l_post in l_responseData['data']:
 
-            if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                l_request = l_responseData['paging']['next']
+            # standard FB API paging handling
+            if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
+                l_request = l_response_data['paging']['next']
                 l_response = self.performRequest(l_request)
 
-                l_responseData = json.loads(l_response)
+                l_response_data = json.loads(l_response)
             else:
                 l_finished = True
 
@@ -293,9 +329,11 @@ class BulkDownloader:
         """
         self.m_logger.info('Start get_posts()')
 
+        # get a connection from the pool and a cursor from the pool
         l_conn = self.m_pool.getconn('BulkDownloader.get_posts()')
         l_cursor = l_conn.cursor()
 
+        # select all pages from TB_PAGES
         try:
             l_cursor.execute("""
                 select "ID", "TX_NAME" from "TB_PAGES" order by "DT_CRE";
@@ -304,33 +342,774 @@ class BulkDownloader:
             self.m_logger.warning('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query))
             raise
 
+        # loop through all pages
         for l_id, l_name in l_cursor:
             self.m_logger.info('$$$$$$$$$ [{0}] $$$$$$$$$$'.format(l_name))
+            # store the current page name for future reference (debug displays mostly)
             self.m_page = l_name
-            self.getPostsFromPage(l_id)
+            # get posts from the current page
+            self.get_posts_from_page(l_id)
 
+        # release DB objects once finished
         l_cursor.close()
         self.m_pool.putconn(l_conn)
         self.m_logger.info('End get_posts()')
 
+    def get_posts_from_page(self, p_id):
+        """
+        Gets all new posts (not older than :any:`gcm_days_depth`) from a page and store them in the DB. Also, will
+        not retrieve more than :any:`gcm_max_post` posts.
+
+        :param p_id: ID (API App-specific) of the page to get the posts from
+        :return: Nothing
+        """
+        self.m_logger.info('Start getPostsFromPage()')
+
+        l_field_list = 'id,caption,created_time,description,from,icon,link,message,message_tags,name,object_id,' + \
+                       'permalink_url,picture,place,properties,shares,source,status_type,story,to,type,' + \
+                       'updated_time,with_tags'
+
+        # API request: get all posts from the page :any:`p_id` in batches of size :any:`gcm_limit`
+        l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&access_token={3}&fields={4}'.format(
+            EcAppParam.gcm_api_version,
+            p_id,
+            EcAppParam.gcm_limit,
+            self.m_long_token,
+            l_field_list)
+
+        # perform the request
+        l_response = self.performRequest(l_request)
+        # decode the JSON request response
+        l_response_data = json.loads(l_response)
+
+        if len(l_response_data['data']) > 0:
+            self.m_logger.info('   Latest date:' + l_response_data['data'][0]['created_time'])
+
+        l_post_count = 0
+        l_finished = False
+        # loop through all returned posts
+        while not l_finished:
+            # 2 nested loops because of FB-specific paging mechanism (see below)
+            for l_post in l_response_data['data']:
+                # increment the total number of posts retrieved
+                self.m_postRetrieved += 1
+
+                # basic post data items
+                l_post_id = l_post['id']
+                l_post_date = l_post['created_time']
+                l_type = l_post['type']
+                l_shares = int(l_post['shares']['count']) if 'shares' in l_post.keys() else 0
+                self.m_logger.info(
+                    '   =====[ {0}/{1} ]================POST========================='.format(
+                        l_post_count, self.m_page))
+                self.m_logger.info('   id          : ' + l_post_id)
+                self.m_logger.info('   date        : ' + l_post_date)
+
+                # decode the date format of the post creation date --> Python datetime
+                # 2016-04-22T12:03:06+0000
+                l_msg_date = datetime.datetime.strptime(
+                    re.sub(r'\+\d+$', '', l_post_date), '%Y-%m-%dT%H:%M:%S')
+                self.m_logger.info('   date (P)    : {0}'.format(l_msg_date))
+
+                # if message older than gcm_days_depth days ---> break loop
+                l_days_old = (datetime.datetime.now() - l_msg_date).days
+                self.m_logger.info('   Days old    : {0}'.format(l_days_old))
+                if l_days_old > EcAppParam.gcm_days_depth:
+                    self.m_logger.info(
+                        '   ---> Too old, stop getting posts from page [{0}]'.format(self.m_page))
+                    l_finished = True  # break the outer paging loop
+                    break
+
+                # gets the author (FB user) of the post
+                l_user_id = ''
+                if 'from' in l_post.keys():
+                    l_user_id, x = BulkDownloader.getOptionalField(l_post['from'], 'id')
+                    l_user_name, l_user_name_short = BulkDownloader.getOptionalField(l_post['from'], 'name')
+
+                    if EcAppParam.gcm_verboseModeOn:
+                        self.m_logger.info('   from        : {0} [{1}]'.format(l_user_name_short, l_user_id))
+
+                    # store user data
+                    self.storeUser(l_user_id, l_user_name, l_post_date, '   ')
+
+                # get additional data from the post
+                l_name, l_name_short = BulkDownloader.getOptionalField(l_post, 'name')
+                l_caption, l_caption_short = BulkDownloader.getOptionalField(l_post, 'caption')
+                l_description, l_description_sh = BulkDownloader.getOptionalField(l_post, 'description')
+                l_story, l_story_short = BulkDownloader.getOptionalField(l_post, 'story')
+                l_message, l_message_short = BulkDownloader.getOptionalField(l_post, 'message')
+
+                l_object_id, x = BulkDownloader.getOptionalField(l_post, 'object_id')
+                l_link, x = BulkDownloader.getOptionalField(l_post, 'link')
+                l_picture, x = BulkDownloader.getOptionalField(l_post, 'picture')
+                l_source, x = BulkDownloader.getOptionalField(l_post, 'source')
+
+                l_icon, x = BulkDownloader.getOptionalField(l_post, 'icon')
+                l_permalink_url, x = BulkDownloader.getOptionalField(l_post, 'permalink_url')
+                l_status_type, x = BulkDownloader.getOptionalField(l_post, 'status_type')
+                l_updated_time, x = BulkDownloader.getOptionalField(l_post, 'updated_time')
+
+                # additional post data requiring JSON decoding
+                l_place = ''
+                if 'place' in l_post.keys():
+                    l_place = json.dumps(l_post['place'])
+
+                l_tags = ''
+                if 'message_tags' in l_post.keys():
+                    l_tags = json.dumps(l_post['message_tags'])
+
+                l_with_tags = ''
+                if 'with_tags' in l_post.keys():
+                    l_with_tags = json.dumps(l_post['with_tags'])
+
+                l_properties = ''
+                if 'properties' in l_post.keys():
+                    l_properties = json.dumps(l_post['properties'])
+
+                # debug display of post data
+                self.m_logger.info('   name        : ' + l_name_short)
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('   caption     : ' + l_caption_short)
+                    self.m_logger.info('   description : ' + l_description_sh)
+                    self.m_logger.info('   story       : ' + l_story_short)
+                    self.m_logger.info('   message     : ' + l_message_short)
+                    self.m_logger.info('   permalink   : ' + l_permalink_url)
+                    self.m_logger.info('   icon        : ' + l_icon)
+                    self.m_logger.info('   object_id   : ' + l_object_id)
+                    self.m_logger.info('   shares      : {0}'.format(l_shares))
+                    self.m_logger.info('   type        : ' + l_type)
+                    self.m_logger.info('   updated time: ' + l_updated_time)
+                    self.m_logger.info('   with        : {0}'.format(l_with_tags))
+                    self.m_logger.info('   tags        : {0}'.format(l_tags))
+                    self.m_logger.info('   place       : {0}'.format(l_place))
+
+                # store post information
+                if self.storeObject(
+                        p_padding='   ',
+                        p_type='Post',
+                        p_date_creation=l_post_date,
+                        p_date_modification=l_updated_time,
+                        p_id=l_post_id,
+                        p_parentId=p_id,
+                        p_pageId=p_id,
+                        p_postId='',
+                        p_fb_type=l_type,
+                        p_fb_status_type=l_status_type,
+                        p_shareCount=l_shares,
+                        p_likeCount=0,
+                        p_permalink_url=l_permalink_url,
+                        p_name=l_name,
+                        p_caption=l_caption,
+                        p_desc=l_description,
+                        p_story=l_story,
+                        p_message=l_message,
+                        p_link=l_link,
+                        p_picture=l_picture,
+                        p_place=l_place,
+                        p_source=l_source,
+                        p_userId=l_user_id,
+                        p_tags=l_tags,
+                        p_with_tags=l_with_tags,
+                        p_properties=l_properties):
+
+                    # get attachments and comments only if the storage of the post was successful, i.e. if
+                    # the post was a new one
+                    self.get_post_attachments(l_post_id, l_status_type, l_source, l_link, l_picture, l_properties)
+                    self.get_comments(l_post_id, l_post_id, p_id, 0)
+                else:
+                    # if already in DB ---> break loop because it means new posts are now exhausted
+                    self.m_logger.info(
+                        '   ---> Post already in DB, stop getting posts from page [{0}]'.format(self.m_page))
+                    l_finished = True  # also break outer paging loop
+                    break
+
+                l_post_count += 1
+                if l_post_count > EcAppParam.gcm_max_post:
+                    self.m_logger.info(
+                        '   ---> Maximum number of posts ({0}) reached, stop this page'.format(l_post_count))
+                    l_finished = True
+                    break
+            # End of loop: for l_post in l_responseData['data']: (looping through current batch of posts)
+
+            # FB API paging mechanism
+            if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
+                self.m_logger.info('   *** Getting next post block ...')
+                l_request = l_response_data['paging']['next']
+                l_response = self.performRequest(l_request)
+
+                l_response_data = json.loads(l_response)
+            else:
+                # if no more 'pages' (batches of posts) to load, break the loop
+                break
+        # end while not l_finished: (outer loop to handle paging)
+
+        self.m_logger.info('End getPostsFromPage()')
+
+    def get_post_attachments(self, p_id, p_status_type, p_source, p_link, p_picture, p_properties):
+        """
+        Gets all attachments from a post. Gets a number of parameters from the caller (:any:`get_posts_from_page`)
+        which contain data related to media to be stored along attachments. This function calls
+        :any:`scan_attachments` which does most of the work. The reason for this is that :any:`scan_attachments` may
+        need to call itself recursively if there are sub-attachments.
+
+        :param p_id: API App-specific ID of the post.
+        :param p_status_type: parent post related data
+        :param p_source: parent post related data
+        :param p_link: parent post related data
+        :param p_picture: parent post related data
+        :param p_properties: parent post related data
+        :return: Nothing
+        """
+        self.m_logger.debug('Start get_post_attachments()')
+
+        l_field_list = 'description,description_tags,media,target,title,type,url,attachments,subattachments'
+
+        # API request: get list of attachments linked to this post
+        l_request = 'https://graph.facebook.com/{0}/{1}/attachments?limit={2}&access_token={3}&fields={4}'.format(
+            EcAppParam.gcm_api_version,
+            p_id,
+            EcAppParam.gcm_limit,
+            self.m_long_token,
+            l_field_list)
+
+        # perform the request
+        l_response = self.performRequest(l_request)
+        # decode the JSON response
+        l_response_data = json.loads(l_response)
+
+        # call the recursive function that will actually do the work
+        self.scan_attachments(
+            l_response_data['data'],
+            p_id,
+            p_status_type,
+            p_source,
+            p_link,
+            p_picture,
+            p_properties,
+            1)
+
+        self.m_logger.info('End get_post_attachments()')
+
+    def scan_attachments(self,
+                         p_attachment_list,
+                         p_post_id,
+                         p_status_type, p_source, p_link, p_picture, p_properties,
+                         p_depth):
+        """
+        Scans a JSON response fragment in order to get attachments and (through recursion) sub-attachments, if any.
+
+        :param p_attachment_list: The dictionary resulting from the decoding of an API response.
+        :param p_post_id: FB API App-specific ID of the parent post
+        :param p_status_type: Post-related data to be stored alongside the attachment data
+        :param p_source: Post-related data to be stored alongside the attachment data
+        :param p_link: Post-related data to be stored alongside the attachment data
+        :param p_picture: Post-related data to be stored alongside the attachment data
+        :param p_properties: Post-related data to be stored alongside the attachment data
+        :param p_depth: Sub-attachment depth. 1 if directly under post
+        :return: Nothing
+        """
+        self.m_logger.debug('Start scan_attachments()')
+        # spaces padding string for debug purposes
+        l_depth_padding = ' ' * (p_depth * 3)
+
+        l_attachment_count = 0
+        # loop through the attachments in the fragment passed from the caller
+        for l_attachment in p_attachment_list:
+            # basic attachment data
+            l_description, x = BulkDownloader.getOptionalField(l_attachment, 'description')
+            l_title, x = BulkDownloader.getOptionalField(l_attachment, 'title')
+            l_type, x = BulkDownloader.getOptionalField(l_attachment, 'type')
+            l_url, x = BulkDownloader.getOptionalField(l_attachment, 'url')
+
+            # list of tags requiring JSON decoding
+            l_description_tags = None
+            if 'description_tags' in l_attachment.keys():
+                l_description_tags = json.dumps(l_attachment['description_tags'])
+
+            l_src = None
+            l_width = None
+            l_height = None
+            l_media = None
+            # extraction of media-specific data items, if any
+            if 'media' in l_attachment.keys():
+                l_media = l_attachment['media']
+                if list(l_media.keys()) == ['image']:
+                    try:
+                        l_src = l_media['image']['src']
+                        l_width = int(l_media['image']['width'])
+                        l_height = int(l_media['image']['height'])
+                    except ValueError:
+                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(
+                            l_media['image']['width'], l_media['image']['height']))
+                    except KeyError:
+                        self.m_logger.warning('Missing key in: {0}'.format(l_media['image']))
+                l_media = json.dumps(l_attachment['media'])
+
+            # target link, if any
+            l_target = None
+            if 'target' in l_attachment.keys():
+                l_target = json.dumps(l_attachment['target'])
+
+            # debug display of attachment data (alongside post-related data passed as parameters)
+            self.m_logger.info(
+                '{0}++++[ {1}/{2} ]++++++++++++{3}ATTACHMENT++++++++++++++++++++++++'.format(
+                    l_depth_padding, l_attachment_count, self.m_page, 'SUB' if p_depth >= 2 else ''))
+
+            self.m_logger.info('{0}Type        : {1}'.format(l_depth_padding, l_type))
+            self.m_logger.info('{0}status type : {1}'.format(l_depth_padding, p_status_type))
+            self.m_logger.info('{0}Description : {1}'.format(l_depth_padding, l_description))
+            self.m_logger.info('{0}Title       : {1}'.format(l_depth_padding, l_title))
+            self.m_logger.info('{0}Tags        : {1}'.format(l_depth_padding, l_description_tags))
+            self.m_logger.info('{0}Target      : {1}'.format(l_depth_padding, l_target))
+            self.m_logger.info('{0}Url         : {1}'.format(l_depth_padding, l_url))
+            self.m_logger.info('{0}link        : {1}'.format(l_depth_padding, p_link))
+            self.m_logger.info('{0}Media       : {1}'.format(l_depth_padding, l_media))
+            self.m_logger.info('{0}Media/src   : {1}'.format(l_depth_padding, l_src))
+            self.m_logger.info('{0}Media/width : {1}'.format(l_depth_padding, l_width))
+            self.m_logger.info('{0}Media/height: {1}'.format(l_depth_padding, l_height))
+            self.m_logger.info('{0}source      : {1}'.format(l_depth_padding, p_source))
+            self.m_logger.info('{0}picture     : {1}'.format(l_depth_padding, p_picture))
+            self.m_logger.info('{0}properties  : {1}'.format(l_depth_padding, p_properties))
+
+            # store attachment data in TB_MEDIA
+            self.store_media(p_post_id, l_type, l_description, l_title, l_description_tags,
+                             l_target, l_media, l_src, l_width, l_height)
+
+            # recursive call for sub-attachment, if any
+            if 'subattachments' in l_attachment.keys():
+                self.scan_attachments(l_attachment['subattachments']['data'],
+                                      p_post_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth + 1)
+
+            l_attachment_count += 1
+        # end of loop: for l_attachment in p_attachment_list:
+
+        self.m_logger.debug('End scan_attachments()')
+
+    def get_comments(self, p_id, p_post_id, p_page_id, p_depth):
+        """
+        Gets comments from a post or another comment.
+
+        :param p_id: API App-specific ID of the parent post or comment.
+        :param p_post_id: API App-specific ID of the parent post.
+        :param p_page_id: API App-specific ID of the parent page of the post.
+        :param p_depth: 1 if directly under post, >1 if under another comment.
+        :return: Nothing.
+        """
+        self.m_logger.debug('Start scan_attachments()')
+        # spaces padding string for debug purposes
+        l_depth_padding = ' ' * ((p_depth + 2) * 3)
+
+        # get list of comments attached to this post (or this comment)
+        l_field_list = 'id,attachment,created_time,comment_count,from,like_count,message,message_tags,user_likes'
+
+        l_request = 'https://graph.facebook.com/{0}/{1}/comments?limit={2}&access_token={3}&fields={4}'.format(
+            EcAppParam.gcm_api_version,
+            p_id,
+            EcAppParam.gcm_limit,
+            self.m_long_token,
+            l_field_list)
+
+        # perform request
+        l_response = self.performRequest(l_request)
+        # decode JSON request response
+        l_response_data = json.loads(l_response)
+
+        if len(l_response_data['data']) > 0:
+            self.m_logger.info('{0}Latest date: '.format(l_depth_padding) + l_response_data['data'][0]['created_time'])
+
+        l_comm_count = 0
+        while True:
+            # double loop for FB API paging handling
+            for l_comment in l_response_data['data']:
+                self.m_commentRetrieved += 1
+
+                # basic comment data
+                l_comment_id = l_comment['id']
+                l_comment_date = l_comment['created_time']
+                l_comment_likes = int(l_comment['like_count'])
+                l_comment_c_count = int(l_comment['comment_count'])
+
+                # debug display
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info(
+                        '{0}----[{1}]-----------COMMENT------------------------------'.format(
+                            l_depth_padding, self.m_page))
+                    self.m_logger.info('{0}id      : '.format(l_depth_padding) + l_comment_id)
+                    self.m_logger.info('{0}date    : '.format(l_depth_padding) + l_comment_date)
+                    self.m_logger.info('{0}likes   : {1}'.format(l_depth_padding, l_comment_likes))
+                    self.m_logger.info('{0}sub com.: {1}'.format(l_depth_padding, l_comment_c_count))
+
+                # comment author (user) data
+                l_user_id = ''
+                if 'from' in l_comment.keys():
+                    l_user_id, x = BulkDownloader.getOptionalField(l_comment['from'], 'id')
+                    l_user_name, l_user_name_short = BulkDownloader.getOptionalField(l_comment['from'], 'name')
+
+                    if EcAppParam.gcm_verboseModeOn:
+                        self.m_logger.info(
+                            '{0}from    : {1} [{2}]'.format(l_depth_padding, l_user_name_short, l_user_id))
+
+                    # store user data
+                    self.storeUser(l_user_id, l_user_name, l_comment_date, l_depth_padding)
+
+                # comment text
+                l_message, l_message_short = BulkDownloader.getOptionalField(l_comment, 'message')
+
+                # comment tags list
+                l_tags = ''
+                if 'message_tags' in l_comment.keys():
+                    l_tags = json.dumps(l_comment['message_tags'])
+
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('{0}message : '.format(l_depth_padding) + l_message_short)
+                    self.m_logger.info('{0}tags    : '.format(l_depth_padding) + l_tags)
+
+                # store comment information
+                if self.storeObject(
+                        p_padding=l_depth_padding,
+                        p_type='Comm',
+                        p_date_creation=l_comment_date,
+                        p_date_modification='',
+                        p_id=l_comment_id,
+                        p_parentId=p_id,
+                        p_pageId=p_page_id,
+                        p_postId=p_post_id,
+                        p_fb_type='Comment',
+                        p_fb_status_type='',
+                        p_shareCount=0,
+                        p_likeCount=l_comment_likes,
+                        p_permalink_url='',
+                        p_message=l_message,
+                        p_userId=l_user_id,
+                        p_tags=l_tags,
+                ):
+                    l_comm_count += 1
+                    # scan possible attachments if storage successful (i.e. it is a new comment)
+                    if 'attachment' in l_comment.keys():
+                        self.scan_attachments(
+                            [l_comment['attachment']], l_comment_id, '', '', '', '', '', p_depth + 2)
+
+                # get sub-comments if any (recursive call)
+                if l_comment_c_count > 0:
+                    self.get_comments(l_comment_id, p_post_id, p_page_id, p_depth + 1)
+            # end of loop: for l_comment in l_response_data['data']:
+
+            # paging handling in the outer loop
+            if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
+                self.m_logger.info('{0}[{1}] *** Getting next comment block ...'.format(l_depth_padding, l_comm_count))
+                l_request = l_response_data['paging']['next']
+                l_response = self.performRequest(l_request)
+
+                l_response_data = json.loads(l_response)
+            else:
+                break
+        # end of loop: while True:
+
+        self.m_logger.info('[End scan_attachments()] {0}comment download count --> {1}'.format(
+            l_depth_padding[:-3], l_comm_count))
+
+    def repeat_posts_update(self):
+        """
+        Calls :any:`BulkDownloader.update_posts()` repeatedly, with a 1 second delay between calls. Meant to be
+        the posts update thread initiated in :any:`BulkDownloader.start_threads()`. The loop stops (and the thread
+        terminates) when :any:`m_threads_proceed` is set to `False`
+
+        :return: Nothing
+        """
+        self.m_logger.info('Start repeat_posts_update()')
+        while self.m_threads_proceed:
+            self.update_posts()
+            time.sleep(1)
+
+        self.m_logger.info('End repeat_posts_update()')
+
+    def update_posts(self):
+        """
+        Update existing posts (100 at a time): Text modifications, new comments, likes count.
+
+        The posts selected for update are those not older than :any:`gcm_days_depth` days and not
+        already updated in the last 48 hours or those which were just created today (`DT_LAST_UPDATE` null).
+        Among these, comments will be downloaded only for those which were **not** created today
+        (`DT_LAST_UPDATE` not null as defined in the calculated column `COMMENT_FLAG`)
+
+        :return: Nothing
+        """
+        self.m_logger.info('Start update_posts()')
+
+        # get DB connection and cursor
+        l_conn = self.m_pool.getconn('BulkDownloader.update_posts()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                select
+                    "ID"
+                    , "ID_PAGE"
+                    , case when "DT_LAST_UPDATE" is null then '' else 'X' end "COMMENT_FLAG"
+                from "TB_OBJ"
+                where
+                    "ST_TYPE" = 'Post'
+                    and DATE_PART('day', now()::date - "DT_CRE") <= %s
+                    and (
+                        "DT_LAST_UPDATE" is null
+                        or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
+                    )
+                limit 100;
+            """, (EcAppParam.gcm_days_depth,))
+
+            # loop through the posts obtained from the DB
+            for l_post_id, l_page_id, l_comment_flag in l_cursor:
+                self.m_postRetrieved += 1
+                # get post data
+                l_field_list = 'id,created_time,from,story,message,' + \
+                               'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
+
+                # FB API request to get the data for this post
+                l_request = 'https://graph.facebook.com/{0}/{1}?limit={2}&access_token={3}&fields={4}'.format(
+                    EcAppParam.gcm_api_version,
+                    l_post_id,
+                    EcAppParam.gcm_limit,
+                    self.m_long_token,
+                    l_field_list)
+
+                # perform request
+                l_response = self.performRequest(l_request)
+                # decode request's JSON response
+                l_response_data = json.loads(l_response)
+
+                self.m_logger.info('============= UPDATE ==============================================')
+                self.m_logger.info('Post ID     : {0}'.format(l_post_id))
+                if 'created_time' in l_response_data.keys():
+                    self.m_logger.info('Post date   : {0}'.format(l_response_data['created_time']))
+                    self.m_logger.info('Comm. dnl ? : {0}'.format(l_comment_flag))
+
+                # basic post data
+                l_name, l_name_short = BulkDownloader.getOptionalField(l_response_data, 'name')
+                l_caption, l_caption_short = BulkDownloader.getOptionalField(l_response_data, 'caption')
+                l_description, l_description_sh = BulkDownloader.getOptionalField(l_response_data, 'description')
+                l_story, l_story_short = BulkDownloader.getOptionalField(l_response_data, 'story')
+                l_message, l_message_short = BulkDownloader.getOptionalField(l_response_data, 'message')
+
+                # shares count for the post
+                l_shares = int(l_response_data['shares']['count']) if 'shares' in l_response_data.keys() else 0
+
+                # debug display
+                self.m_logger.info('name        : {0}'.format(l_name_short))
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('caption     : {0}'.format(l_caption_short))
+                    self.m_logger.info('description : {0}'.format(l_description_sh))
+                    self.m_logger.info('story       : {0}'.format(l_story_short))
+                    self.m_logger.info('message     : {0}'.format(l_message_short))
+                    self.m_logger.info('shares      : {0}'.format(l_shares))
+
+                # FB API request to get post likes count (actually will get the first page of the full likes list
+                # because there is no way to get the count by itself)
+                l_request = \
+                    'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}&summary=true'.format(
+                        EcAppParam.gcm_api_version,
+                        l_post_id,
+                        25,
+                        self.m_long_token,
+                        l_field_list)
+
+                # performs the request
+                l_response = self.performRequest(l_request)
+                # decodes the request's JSON response
+                l_response_data = json.loads(l_response)
+
+                # get the count if present, otherwise 0
+                l_like_count = 0
+                if 'summary' in l_response_data.keys():
+                    l_like_count = int(l_response_data['summary']['total_count'])
+
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('likes       : {0}'.format(l_like_count))
+
+                if l_comment_flag == 'X' and self.updateObject(
+                        l_post_id, l_shares, l_like_count, l_name, l_caption, l_description, l_story, l_message):
+                    # get comments if l_comment_flag is set and the post update was successful
+                    self.get_comments(l_post_id, l_post_id, l_page_id, 0)
+
+        except Exception as e:
+            self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('Post Update Unknown Exception: {0}'.format(repr(e)))
+
+        # close DB access handles when finished
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+        self.m_logger.info('End update_posts()')
+
+    def repeat_get_likes_details(self):
+        """
+        Calls :any:`BulkDownloader.get_likes_detail()` repeatedly, with a 1 second delay between calls. Meant to be
+        the likes detail download thread initiated in :any:`BulkDownloader.start_threads()`.
+        The loop stops (and the thread terminates) when :any:`m_threads_proceed` is set to `False`
+
+        :return: Nothing
+        """
+        self.m_logger.info('Start repeat_get_likes_details()')
+        while self.m_threads_proceed:
+            self.get_likes_detail()
+            time.sleep(1)
+
+        self.m_logger.info('End repeat_get_likes_details()')
+
+    def get_likes_detail(self):
+        """
+        Get the likes details of sufficiently old posts and comments (100 at a time). "Sufficiently old" means,
+        older than :any:`gcm_likes_depth` days.
+
+        :return: Nothing
+        """
+        self.m_logger.info('Start get_likes_detail()')
+
+        # get DB connection and cursor
+        l_conn = self.m_pool.getconn('BulkDownloader.get_likes_detail()')
+        l_cursor = l_conn.cursor()
+
+        # get the total count of objects that will be processed in this run (100 or less)
+        l_total_count = 0
+        try:
+            l_cursor.execute("""
+                SELECT
+                    count(1) AS "LCOUNT"
+                FROM
+                    "TB_OBJ"
+                WHERE
+                    "ST_TYPE" != 'Page'
+                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                    AND "F_LIKE_DETAIL" is null
+                LIMIT 100;
+            """, (EcAppParam.gcm_likes_depth,))
+
+            for l_count, in l_cursor:
+                l_total_count = l_count
+        except Exception as e:
+            self.m_logger.critical('Likes detail download (count) Unknown Exception: {0}/{1}'.format(
+                repr(e), l_cursor.query))
+            raise BulkDownloaderException('Likes detail download (count) Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        l_cursor = l_conn.cursor()
+
+        # all non page objects older than gcm_likes_depth days and not already processed
+        l_obj_count = 0
+        try:
+            l_cursor.execute("""
+                SELECT
+                    "ID", "ID_INTERNAL", "DT_CRE"
+                FROM
+                    "TB_OBJ"
+                WHERE
+                    "ST_TYPE" != 'Page'
+                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                    AND "F_LIKE_DETAIL" is null
+                LIMIT 100;
+            """, (EcAppParam.gcm_likes_depth,))
+
+            # loop through the list of objects obtained from the DB
+            for l_id, l_internal_id, l_dt_msg in l_cursor:
+                # l_id: FB ID
+                # l_internal_id: DB ID
+                self.m_logger.info('{0}/{1}'.format(l_obj_count, l_total_count), l_id, '--->')
+
+                # FB API request to get the list of likes for the given object
+                l_request = 'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}'.format(
+                    EcAppParam.gcm_api_version,
+                    l_id,
+                    EcAppParam.gcm_limit,
+                    self.m_long_token)
+
+                # perform request
+                l_response = self.performRequest(l_request)
+                # decode request's JSON response
+                l_response_data = json.loads(l_response)
+
+                l_like_count = 0
+                # loop through all likes returned by the request
+                while True:
+                    # double loop to handle FB API paging mechanism
+                    for l_liker in l_response_data['data']:
+                        # ID of the liker, if any (otherwise skip)
+                        try:
+                            l_liker_id = l_liker['id']
+                        except KeyError:
+                            self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker))
+                            continue
+
+                        # Name of the liker, if any (otherwise skip)
+                        try:
+                            l_liker_name = l_liker['name']
+                        except KeyError:
+                            self.m_logger.warning('No name found in Liker: {0}'.format(l_liker))
+                            continue
+
+                        # Parent object date in string form for database insertion
+                        l_dt_msg_str = l_dt_msg.strftime('%Y-%m-%dT%H:%M:%S+000')
+                        # store the liker in the DB
+                        self.storeUser(l_liker_id, l_liker_name, l_dt_msg_str, '')
+
+                        # get the DB ID of the liker
+                        l_liker_internal_id = self.getUserInternalId(l_liker_id)
+
+                        # create a like link in the DB btw the liker and the object
+                        self.createLikeLink(l_liker_internal_id, l_internal_id, l_dt_msg_str)
+
+                        # debug display
+                        if EcAppParam.gcm_verboseModeOn:
+                            self.m_logger.debug('   {0}/{1} [{2} | {3}] {4}'.format(
+                                l_obj_count, l_total_count, l_liker_id, l_liker_internal_id, l_liker_name))
+
+                        l_like_count += 1
+                    # end of loop: for l_liker in l_response_data['data']:
+
+                    # FB API paging mechanics
+                    if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
+                        self.m_logger.info('   *** {0}/{1} Getting next likes block ...'.format(
+                            l_obj_count, l_total_count))
+                        l_request = l_response_data['paging']['next']
+                        l_response = self.performRequest(l_request)
+
+                        l_response_data = json.loads(l_response)
+                    else:
+                        break
+                # end of loop: while True:
+
+                # mark the object to indicated likes download complete
+                self.setLikeFlag(l_id)
+
+                self.m_logger.info('   {0}/{1} --> {2} Likes:'.format(l_obj_count, l_total_count, l_like_count))
+                l_obj_count += 1
+
+        except Exception as e:
+            self.m_logger.critical('Likes detail download Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('Likes detail download Exception: {0}'.format(repr(e)))
+
+        # release DB handles when finished
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+        self.m_logger.info('End get_likes_detail()')
+
     def repeat_fetch_images(self):
         """
-        Calls :any:`BulkDownloader.fetch_images()` repeatedly, with a 10 second delay between calls. Meant to be 
-        the image fetching thread initiated in :any:`BulkDownloader.__init__()`. The loop stops (and the thread 
-        terminates) when :any:`m_fetch_proceed` is set to `False`
+        Calls :any:`BulkDownloader.fetch_images()` repeatedly, with a 1 second delay between calls. Meant to be
+        the image fetching thread initiated in :any:`BulkDownloader.m_threads_proceed()`.
+        The loop stops (and the thread terminates) when :any:`m_threads_proceed` is set to `False`
         
         :return: Nothing 
         """
         self.m_logger.info('Start repeat_fetch_images()')
         while self.m_threads_proceed:
             self.fetch_images()
-            time.sleep(10)
+            time.sleep(1)
 
         self.m_logger.info('End repeat_fetch_images()')
 
     def fetch_images(self):
         """
-        Image fetching. Take a block of 500 records in `TB_MEDIA` and attempts to download the pictures they reference
+        Image fetching. Take a block of 100 records in `TB_MEDIA` and attempts to download the pictures they reference
         (if any).
         
         :return: Nothing 
@@ -344,7 +1123,7 @@ class BulkDownloader:
                 select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL" 
                 from "TB_MEDIA"
                 where "TX_MEDIA_SRC" is not NULL and not "F_LOADED" and not "F_ERROR"
-                limit 500;
+                limit 100;
             """)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
@@ -1445,601 +2224,6 @@ class BulkDownloader:
                 l_valueShort = l_value
 
         return l_value, l_valueShort
-
-    def getPostsFromPage(self, p_id):
-        """
-        Gets all new posts from a page and store them in the DB.
-        
-        :param p_id: ID (API App-specific) of the page to get the posts from 
-        :return: Nothing
-        """
-        self.m_logger.info('Start getPostsFromPage()')
-
-        l_fieldList = 'id,caption,created_time,description,from,icon,link,message,message_tags,name,object_id,' + \
-                      'permalink_url,picture,place,properties,shares,source,status_type,story,to,type,' + \
-                      'updated_time,with_tags'
-
-        l_request = ('https://graph.facebook.com/{0}/{1}/feed?limit={2}&' +
-                     'access_token={3}&fields={4}').format(
-            EcAppParam.gcm_api_version, p_id, EcAppParam.gcm_limit, self.m_long_token, l_fieldList)
-
-        l_response = self.performRequest(l_request)
-        l_responseData = json.loads(l_response)
-
-        if len(l_responseData['data']) > 0:
-            self.m_logger.info('   Latest date:' + l_responseData['data'][0]['created_time'])
-
-        l_postCount = 0
-        l_finished = False
-        while not l_finished:
-            for l_post in l_responseData['data']:
-                self.m_postRetrieved += 1
-
-                l_postId = l_post['id']
-                l_postDate = l_post['created_time']
-                l_type = l_post['type']
-                l_shares = int(l_post['shares']['count']) if 'shares' in l_post.keys() else 0
-                self.m_logger.info(
-                    '   =====[ {0}/{1} ]================POST========================='.format(
-                        l_postCount, self.m_page))
-                self.m_logger.info('   id          : ' + l_postId)
-                self.m_logger.info('   date        : ' + l_postDate)
-
-                # 2016-04-22T12:03:06+0000
-                l_msgDate = datetime.datetime.strptime(
-                    re.sub(r'\+\d+$', '', l_postDate), '%Y-%m-%dT%H:%M:%S')
-                self.m_logger.info('   date (P)    : {0}'.format(l_msgDate))
-
-                # if message older than G_DAYS_DEPTH days ---> break loop
-                l_days_old = (datetime.datetime.now() - l_msgDate).days
-                self.m_logger.info('   Days old    : {0}'.format(l_days_old))
-                if l_days_old > EcAppParam.gcm_days_depth:
-                    self.m_logger.info('   ---> Too old, stop this page')
-                    l_finished = True
-                    break
-
-                l_userId = ''
-                if 'from' in l_post.keys():
-                    l_userId, l_userIdShort = BulkDownloader.getOptionalField(l_post['from'], 'id')
-                    l_userName, l_userNameShort = BulkDownloader.getOptionalField(l_post['from'], 'name')
-
-                    if EcAppParam.gcm_verboseModeOn:
-                        self.m_logger.info('   from        : {0} [{1}]'.format(l_userNameShort, l_userId))
-
-                    # store user data
-                    self.storeUser(l_userId, l_userName, l_postDate, '   ')
-
-                l_name, l_nameShort = BulkDownloader.getOptionalField(l_post, 'name')
-                l_caption, l_captionShort = BulkDownloader.getOptionalField(l_post, 'caption')
-                l_description, l_descriptionSh = BulkDownloader.getOptionalField(l_post, 'description')
-                l_story, l_storyShort = BulkDownloader.getOptionalField(l_post, 'story')
-                l_message, l_messageShort = BulkDownloader.getOptionalField(l_post, 'message')
-
-                l_object_id, x = BulkDownloader.getOptionalField(l_post, 'object_id')
-                l_link, x = BulkDownloader.getOptionalField(l_post, 'link')
-                l_picture, x = BulkDownloader.getOptionalField(l_post, 'picture')
-                l_source, x = BulkDownloader.getOptionalField(l_post, 'source')
-
-                l_icon, x = BulkDownloader.getOptionalField(l_post, 'icon')
-                l_permalink_url, x = BulkDownloader.getOptionalField(l_post, 'permalink_url')
-                l_status_type, x = BulkDownloader.getOptionalField(l_post, 'status_type')
-                l_updated_time, x = BulkDownloader.getOptionalField(l_post, 'updated_time')
-
-                l_place = ''
-                if 'place' in l_post.keys():
-                    l_place = json.dumps(l_post['place'])
-
-                l_tags = ''
-                if 'message_tags' in l_post.keys():
-                    l_tags = json.dumps(l_post['message_tags'])
-
-                l_with_tags = ''
-                if 'with_tags' in l_post.keys():
-                    l_with_tags = json.dumps(l_post['with_tags'])
-
-                l_properties = ''
-                if 'properties' in l_post.keys():
-                    l_properties = json.dumps(l_post['properties'])
-
-                self.m_logger.info('   name        : ' + l_nameShort)
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('   caption     : ' + l_captionShort)
-                    self.m_logger.info('   description : ' + l_descriptionSh)
-                    self.m_logger.info('   story       : ' + l_storyShort)
-                    self.m_logger.info('   message     : ' + l_messageShort)
-                    self.m_logger.info('   permalink   : ' + l_permalink_url)
-                    self.m_logger.info('   icon        : ' + l_icon)
-                    self.m_logger.info('   object_id   : ' + l_object_id)
-                    self.m_logger.info('   shares      : {0}'.format(l_shares))
-                    self.m_logger.info('   type        : ' + l_type)
-                    self.m_logger.info('   updated time: ' + l_updated_time)
-                    self.m_logger.info('   with        : {0}'.format(l_with_tags))
-                    self.m_logger.info('   tags        : {0}'.format(l_tags))
-                    self.m_logger.info('   place       : {0}'.format(l_place))
-
-                # store post information
-                if self.storeObject(
-                        p_padding='   ',
-                        p_type='Post',
-                        p_date_creation=l_postDate,
-                        p_date_modification=l_updated_time,
-                        p_id=l_postId,
-                        p_parentId=p_id,
-                        p_pageId=p_id,
-                        p_postId='',
-                        p_fb_type=l_type,
-                        p_fb_status_type=l_status_type,
-                        p_shareCount=l_shares,
-                        p_likeCount=0,
-                        p_permalink_url=l_permalink_url,
-                        p_name=l_name,
-                        p_caption=l_caption,
-                        p_desc=l_description,
-                        p_story=l_story,
-                        p_message=l_message,
-                        p_link=l_link,
-                        p_picture=l_picture,
-                        p_place=l_place,
-                        p_source=l_source,
-                        p_userId=l_userId,
-                        p_tags=l_tags,
-                        p_with_tags=l_with_tags,
-                        p_properties=l_properties):
-                    # get comments
-                    self.getPostAttachments(l_postId, l_status_type, l_source, l_link, l_picture, l_properties)
-                    self.getComments(l_postId, l_postId, p_id, 0)
-                    # time.sleep(5)
-                else:
-                    # if already in DB ---> break loop
-                    self.m_logger.info(
-                        '   ---> Post already in DB, stop this page')
-                    l_finished = True
-                    break
-
-                l_postCount += 1
-                if l_postCount > EcAppParam.gcm_max_post:
-                    self.m_logger.info(
-                        '   ---> Maximum number of posts ({0}) reached, stop this page'.format(l_postCount))
-                    l_finished = True
-                    break
-
-                # End for l_post in l_responseData['data']:
-
-            if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                self.m_logger.info('   *** Getting next post block ...')
-                l_request = l_responseData['paging']['next']
-                l_response = self.performRequest(l_request)
-
-                l_responseData = json.loads(l_response)
-            else:
-                break
-            # end while not l_finished:
-
-        self.m_logger.info('End getPostsFromPage()')
-
-    def getPostAttachments(self, p_id, p_status_type, p_source, p_link, p_picture, p_properties):
-        """
-        Gets all attachments from a post.
-        
-        :param p_id: API App-specific ID of the post. 
-        :param p_status_type: 
-        :param p_source: 
-        :param p_link: 
-        :param p_picture: 
-        :param p_properties: 
-        :return: Nothing
-        """
-        self.m_logger.debug('Start getPostAttachments()')
-
-        # get list of attachments attached to this post
-        l_fieldList = 'description,description_tags,media,target,title,type,url,attachments,subattachments'
-
-        l_request = ('https://graph.facebook.com/{0}/{1}/attachments?limit={2}&' +
-                     'access_token={3}&fields={4}').format(
-            EcAppParam.gcm_api_version, p_id, EcAppParam.gcm_limit, self.m_long_token, l_fieldList)
-
-        l_response = self.performRequest(l_request)
-        l_responseData = json.loads(l_response)
-
-        # self.m_logger.info(l_response)
-
-        self.scan_attachments(l_responseData['data'],
-                              p_id, p_status_type, p_source, p_link, p_picture, p_properties, 1)
-        self.m_logger.info('debug getPostAttachments()')
-
-    def scan_attachments(self, p_attachment_list,
-                         p_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth):
-        """
-        Scans a JSON response fragment in order to get attachments and (through recursion) sub-attachments, if any.
-        
-        :param p_attachment_list: 
-        :param p_id: 
-        :param p_status_type: 
-        :param p_source: 
-        :param p_link: 
-        :param p_picture: 
-        :param p_properties: 
-        :param p_depth: 
-        :return: Nothing 
-        """
-        self.m_logger.debug('Start scan_attachments()')
-        l_depthPadding = ' ' * (p_depth * 3)
-
-        l_attachmentCount = 0
-        for l_attachment in p_attachment_list:
-            l_description, x = BulkDownloader.getOptionalField(l_attachment, 'description')
-            l_title, x = BulkDownloader.getOptionalField(l_attachment, 'title')
-            l_type, x = BulkDownloader.getOptionalField(l_attachment, 'type')
-            l_url, x = BulkDownloader.getOptionalField(l_attachment, 'url')
-
-            l_description_tags = None
-            if 'description_tags' in l_attachment.keys():
-                l_description_tags = json.dumps(l_attachment['description_tags'])
-
-            l_src = None
-            l_width = None
-            l_height = None
-            l_media = None
-            if 'media' in l_attachment.keys():
-                l_media = l_attachment['media']
-                # self.m_logger.info('Keys: {0}'.format(list(l_media.keys())))
-                if list(l_media.keys()) == ['image']:
-                    try:
-                        l_src = l_media['image']['src']
-                        l_width = int(l_media['image']['width'])
-                        l_height = int(l_media['image']['height'])
-                    except ValueError:
-                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(
-                            l_media['image']['width'], l_media['image']['height']))
-                    except KeyError:
-                        self.m_logger.warning('Missing key in: {0}'.format(l_media['image']))
-                l_media = json.dumps(l_attachment['media'])
-
-            l_target = None
-            if 'target' in l_attachment.keys():
-                l_target = json.dumps(l_attachment['target'])
-
-            self.m_logger.info(
-                '{0}++++[ {1}/{2} ]++++++++++++{3}ATTACHMENT++++++++++++++++++++++++'.format(
-                    l_depthPadding, l_attachmentCount, self.m_page, 'SUB' if p_depth >= 2 else ''))
-
-            self.m_logger.info('{0}Type        : {1}'.format(l_depthPadding, l_type))
-            self.m_logger.info('{0}status type : {1}'.format(l_depthPadding, p_status_type))
-            self.m_logger.info('{0}Description : {1}'.format(l_depthPadding, l_description))
-            self.m_logger.info('{0}Title       : {1}'.format(l_depthPadding, l_title))
-            self.m_logger.info('{0}Tags        : {1}'.format(l_depthPadding, l_description_tags))
-            self.m_logger.info('{0}Target      : {1}'.format(l_depthPadding, l_target))
-            self.m_logger.info('{0}Url         : {1}'.format(l_depthPadding, l_url))
-            self.m_logger.info('{0}link        : {1}'.format(l_depthPadding, p_link))
-            self.m_logger.info('{0}Media       : {1}'.format(l_depthPadding, l_media))
-            self.m_logger.info('{0}Media/src   : {1}'.format(l_depthPadding, l_src))
-            self.m_logger.info('{0}Media/width : {1}'.format(l_depthPadding, l_width))
-            self.m_logger.info('{0}Media/height: {1}'.format(l_depthPadding, l_height))
-            self.m_logger.info('{0}source      : {1}'.format(l_depthPadding, p_source))
-            self.m_logger.info('{0}picture     : {1}'.format(l_depthPadding, p_picture))
-            self.m_logger.info('{0}properties  : {1}'.format(l_depthPadding, p_properties))
-
-            self.store_media(p_id, l_type, l_description, l_title, l_description_tags,
-                             l_target, l_media, l_src, l_width, l_height)
-
-            if 'subattachments' in l_attachment.keys():
-                self.scan_attachments(l_attachment['subattachments']['data'],
-                                      p_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth+1)
-
-            l_attachmentCount += 1
-        # end of for l_attachment in p_attachment_list:
-
-        self.m_logger.debug('End scan_attachments()')
-
-    def getComments(self, p_id, p_postId, p_pageId, p_depth):
-        """
-        Gets comments from a post or another comment.
-        
-        :param p_id: API App-specific ID of the object or comment.
-        :param p_postId: 
-        :param p_pageId: 
-        :param p_depth: 
-        :return: Nothing. 
-        """
-        self.m_logger.debug('Start scan_attachments()')
-        l_depthPadding = ' ' * ((p_depth + 2) * 3)
-
-        # get list of comments attached to this post (or this comment)
-        l_fieldList = 'id,attachment,created_time,comment_count,from,like_count,message,'+ \
-                      'message_tags,user_likes'
-
-        l_request = ('https://graph.facebook.com/{0}/{1}/comments?limit={2}&' +
-                     'access_token={3}&fields={4}').format(
-            EcAppParam.gcm_api_version, p_id, EcAppParam.gcm_limit, self.m_long_token, l_fieldList)
-
-        l_response = self.performRequest(l_request)
-        l_responseData = json.loads(l_response)
-
-        if len(l_responseData['data']) > 0:
-            self.m_logger.info('{0}Latest date: '.format(l_depthPadding) + l_responseData['data'][0]['created_time'])
-
-        l_commCount = 0
-        while True:
-            for l_comment in l_responseData['data']:
-                self.m_commentRetrieved += 1
-
-                l_commentId = l_comment['id']
-                l_commentDate = l_comment['created_time']
-                l_commentLikes = int(l_comment['like_count'])
-                l_commentCCount = int(l_comment['comment_count'])
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info(
-                        '{0}----[{1}]-----------COMMENT------------------------------'.format(
-                            l_depthPadding, self.m_page))
-                    self.m_logger.info('{0}id      : '.format(l_depthPadding) + l_commentId)
-                    self.m_logger.info('{0}date    : '.format(l_depthPadding) + l_commentDate)
-                    self.m_logger.info('{0}likes   : {1}'.format(l_depthPadding, l_commentLikes))
-                    self.m_logger.info('{0}sub com.: {1}'.format(l_depthPadding, l_commentCCount))
-
-                l_userId = ''
-                if 'from' in l_comment.keys():
-                    l_userId, l_userIdShort = BulkDownloader.getOptionalField(l_comment['from'], 'id')
-                    l_userName, l_userNameShort = BulkDownloader.getOptionalField(l_comment['from'], 'name')
-
-                    if EcAppParam.gcm_verboseModeOn:
-                        self.m_logger.info('{0}from    : {1} [{2}]'.format(l_depthPadding, l_userNameShort, l_userId))
-
-                    # store user data
-                    self.storeUser(l_userId, l_userName, l_commentDate, l_depthPadding)
-
-                l_message, l_messageShort = BulkDownloader.getOptionalField(l_comment, 'message')
-
-                l_tags = ''
-                if 'message_tags' in l_comment.keys():
-                    l_tags = json.dumps(l_comment['message_tags'])
-
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('{0}message : '.format(l_depthPadding) + l_messageShort)
-                    self.m_logger.info('{0}tags    : '.format(l_depthPadding) + l_tags)
-
-                # store comment information
-                if self.storeObject(
-                    p_padding=l_depthPadding,
-                    p_type='Comm',
-                    p_date_creation=l_commentDate,
-                    p_date_modification='',
-                    p_id=l_commentId,
-                    p_parentId=p_id,
-                    p_pageId=p_pageId,
-                    p_postId=p_postId,
-                    p_fb_type='Comment',
-                    p_fb_status_type='',
-                    p_shareCount=0,
-                    p_likeCount=l_commentLikes,
-                    p_permalink_url='',
-                    p_message=l_message,
-                    p_userId=l_userId,
-                    p_tags=l_tags,
-                ):
-                    l_commCount += 1
-                    if 'attachment' in l_comment.keys():
-                        self.scan_attachments(
-                            [l_comment['attachment']], l_commentId, '', '', '', '', '', p_depth + 2)
-
-                # get comments
-                if l_commentCCount > 0:
-                    self.getComments(l_commentId, p_postId, p_pageId, p_depth + 1)
-
-            if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                self.m_logger.info('{0}[{1}] *** Getting next comment block ...'.format(l_depthPadding, l_commCount))
-                l_request = l_responseData['paging']['next']
-                l_response = self.performRequest(l_request)
-
-                l_responseData = json.loads(l_response)
-            else:
-                break
-
-        self.m_logger.info('[End scan_attachments()] {0}comment download count --> {1}'.format(
-            l_depthPadding[:-3], l_commCount))
-
-    def updatePosts(self):
-        """
-        Update existing posts: Text modifications, new comments, likes count.
-        
-        :return: Nothing 
-        """
-        self.m_logger.info('Start updatePosts()')
-        l_conn = self.m_pool.getconn('BulkDownloader.updatePosts()')
-        l_cursor = l_conn.cursor()
-
-        # All posts not older than G_DAYS_DEPTH days and not already updated in the last day
-        # Among these, comments to be downloaded only for those which were not created today
-        # ("DT_LAST_UPDATE" not null)
-        try:
-            l_cursor.execute("""
-                select
-                    "ID"
-                    , "ID_PAGE"
-                    , case when "DT_LAST_UPDATE" is null then '' else 'X' end "COMMENT_DOWNLOAD"
-                from "TB_OBJ"
-                where
-                    "ST_TYPE" = 'Post'
-                    and DATE_PART('day', now()::date - "DT_CRE") <= %s
-                    and (
-                        "DT_LAST_UPDATE" is null
-                        or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
-                    )
-            """, (EcAppParam.gcm_days_depth, ))
-
-            for l_postId, l_pageId, l_commentFlag in l_cursor:
-                self.m_postRetrieved += 1
-                # get post data
-                l_fieldList = 'id,created_time,from,story,message,' + \
-                              'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
-
-                l_request = ('https://graph.facebook.com/{0}/{1}?limit={2}&' +
-                             'access_token={3}&fields={4}').format(
-                    EcAppParam.gcm_api_version,
-                    l_postId,
-                    EcAppParam.gcm_limit,
-                    self.m_long_token,
-                    l_fieldList)
-
-                # print('   l_request:', l_request)
-                l_response = self.performRequest(l_request)
-
-                l_responseData = json.loads(l_response)
-                l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
-                self.m_logger.info('============= UPDATE ==============================================')
-                self.m_logger.info('Post ID     : {0}'.format(l_postId))
-                if 'created_time' in l_responseData.keys():
-                    self.m_logger.info('Post date   : {0}'.format(l_responseData['created_time']))
-                    self.m_logger.info('Comm. dnl ? : {0}'.format(l_commentFlag))
-
-                l_name, l_nameShort = BulkDownloader.getOptionalField(l_responseData, 'name')
-                l_caption, l_captionShort = BulkDownloader.getOptionalField(l_responseData, 'caption')
-                l_description, l_descriptionSh = BulkDownloader.getOptionalField(l_responseData, 'description')
-                l_story, l_storyShort = BulkDownloader.getOptionalField(l_responseData, 'story')
-                l_message, l_messageShort = BulkDownloader.getOptionalField(l_responseData, 'message')
-
-                self.m_logger.info('name        : {0}'.format(l_nameShort))
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('caption     : {0}'.format(l_captionShort))
-                    self.m_logger.info('description : {0}'.format(l_descriptionSh))
-                    self.m_logger.info('story       : {0}'.format(l_storyShort))
-                    self.m_logger.info('message     : {0}'.format(l_messageShort))
-                    self.m_logger.info('shares      : {0}'.format(l_shares))
-
-                # get post likes
-                l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
-                             'access_token={3}&summary=true').format(
-                    EcAppParam.gcm_api_version, l_postId, 25, self.m_long_token, l_fieldList)
-                # print('   l_request:', l_request)
-                l_response = self.performRequest(l_request)
-
-                l_responseData = json.loads(l_response)
-                l_likeCount = 0
-                if 'summary' in l_responseData.keys():
-                    l_likeCount = int(l_responseData['summary']['total_count'])
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('likes       : {0}'.format(l_likeCount))
-
-                if self.updateObject(
-                        l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message) \
-                        and l_commentFlag == 'X':
-                    self.getComments(l_postId, l_postId, l_pageId, 0)
-
-        except Exception as e:
-            self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
-            raise BulkDownloaderException('Post Update Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        self.m_pool.putconn(l_conn)
-        self.m_logger.info('End updatePosts()')
-
-    def getLikesDetail(self):
-        """
-        Get the likes details of sufficiently old posts.
-        
-        :return: Nothing
-        """
-        self.m_logger.info('Start getLikesDetail()')
-        l_conn = self.m_pool.getconn('BulkDownloader.getLikesDetail()')
-        l_cursor = l_conn.cursor()
-
-        l_totalCount = 0
-        try:
-            l_cursor.execute("""
-                SELECT
-                    count(1) AS "LCOUNT"
-                FROM
-                    "TB_OBJ"
-                WHERE
-                    "ST_TYPE" != 'Page'
-                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
-                    AND "F_LIKE_DETAIL" is null
-            """, (EcAppParam.gcm_likes_depth, ))
-
-            for l_count, in l_cursor:
-                l_totalCount = l_count
-        except Exception as e:
-            self.m_logger.critical('Likes detail download (count) Unknown Exception: {0}/{1}'.format(
-                repr(e), l_cursor.query))
-            raise BulkDownloaderException('Likes detail download (count) Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        l_cursor = l_conn.cursor()
-
-        # all non page objects older than G_LIKES_DEPTH days and not already processed
-        l_objCount = 0
-        try:
-            l_cursor.execute("""
-                SELECT
-                    "ID", "ID_INTERNAL", "DT_CRE"
-                FROM
-                    "TB_OBJ"
-                WHERE
-                    "ST_TYPE" != 'Page'
-                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
-                    AND "F_LIKE_DETAIL" is null
-            """, (EcAppParam.gcm_likes_depth, ))
-
-            for l_id, l_internalId, l_dtMsg in l_cursor:
-                print('{0}/{1}'.format(l_objCount, l_totalCount), l_id, '--->')
-                # get likes data
-
-                l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
-                             'access_token={3}').format(
-                    EcAppParam.gcm_api_version, l_id, EcAppParam.gcm_limit, self.m_long_token)
-                l_response = self.performRequest(l_request)
-
-                l_responseData = json.loads(l_response)
-                l_likeCount = 0
-                while True:
-                    for l_liker in l_responseData['data']:
-                        try:
-                            l_likerId = l_liker['id']
-                        except KeyError:
-                            self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker))
-                            continue
-
-                        try:
-                            l_likerName = l_liker['name']
-                        except KeyError:
-                            self.m_logger.warning('No name found in Liker: {0}'.format(l_liker))
-                            continue
-
-                        l_dtMsgStr = l_dtMsg.strftime('%Y-%m-%dT%H:%M:%S+000')
-
-                        self.storeUser(l_likerId, l_likerName, l_dtMsgStr, '')
-
-                        l_likerInternalId = self.getUserInternalId(l_likerId)
-
-                        self.createLikeLink(l_likerInternalId, l_internalId, l_dtMsgStr)
-
-                        if EcAppParam.gcm_verboseModeOn:
-                            self.m_logger.debug('   {0}/{1} [{2} | {3}] {4}'.format(
-                                l_objCount, l_totalCount, l_likerId, l_likerInternalId, l_likerName))
-
-                        l_likeCount += 1
-
-                    if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                        self.m_logger.info('   *** {0}/{1} Getting next likes block ...'.format(
-                            l_objCount, l_totalCount))
-                        l_request = l_responseData['paging']['next']
-                        l_response = self.performRequest(l_request)
-
-                        l_responseData = json.loads(l_response)
-                    else:
-                        break
-
-                self.setLikeFlag(l_id)
-                self.m_logger.info('   {0}/{1} --> {2} Likes:'.format(l_objCount, l_totalCount, l_likeCount))
-                l_objCount += 1
-
-        except Exception as e:
-            self.m_logger.critical('Likes detail download Exception: {0}/{1}'.format(repr(e), l_cursor.query))
-            raise BulkDownloaderException('Likes detail download Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        self.m_pool.putconn(l_conn)
-
-        self.m_logger.info('End getLikesDetail()')
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":

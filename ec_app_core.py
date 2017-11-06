@@ -95,7 +95,7 @@ class EcAppCore(threading.Thread):
         self.m_hcCounter = 0
 
         #: One letter thread name (member inherited from thread class :any:`threading.Thread`)
-        self.name = 'S'
+        self.name = 'H'
 
         # Thread start placed under the responsibility of the implementation app (30/06/2017)
         # self.start()
@@ -153,12 +153,12 @@ class EcAppCore(threading.Thread):
 
         # builds a thread list representation string of the form: XXXXX-aaaaa/bbbbb/cccc where the Xs are
         # the one-letter names of the application's threads and aaaaa, bbbbb, ... are the names of any other
-        # threads, if any. The main thread of the application is represented as 'M'
+        # threads, if any (there should not be). The main thread of the application is represented as 'µ'
         l_thread_list_letter = []
         l_thread_list_other = []
         for t in threading.enumerate():
             if t.name == 'MainThread':
-                l_thread_list_letter.append('M')
+                l_thread_list_letter.append('µ')
             elif len(t.name) == 1:
                 l_thread_list_letter.append(t.name)
             else:

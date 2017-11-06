@@ -161,10 +161,20 @@ class CsApp(EcAppCore):
         Actual start of app threads. This is done separately so that the start-up process performed by
         :any:`StartApp.start_conspi_suck()` may be complete before the threads are started.
 
+        List of one-letter thread names:
+
+        * `µ`: application main thread (running the Http server)
+        * `B`: main background tasks thread executing the bulk download process.
+        * `H`: health-check thread of :any:`EcAppCore`
+        * `U`: post update thread (started in :any:`BulkDownloader.start_threads`)
+        * `L`: likes details download thread (started in :any:`BulkDownloader.start_threads`)
+        * `I`: images download thread (started in :any:`BulkDownloader.start_threads`)
+        * `O`: images OCR thread (started in :any:`BulkDownloader.start_threads`)
+
         :return: Nothing
         """
 
-        # starting the background tasks thread
+        # starting the background tasks thread (will start the bulk download threads)
         self.m_background.start()
         self.m_logger.info('Background tasks thread started')
 
