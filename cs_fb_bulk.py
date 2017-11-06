@@ -30,6 +30,14 @@ class BulkDownloaderException(Exception):
 class BulkDownloader:
     """
     Bogus class used to isolate the bulk downloading (FB API) features.
+
+    .. code-block:: sql
+
+        select "P"."ID", "P"."TX_NAME", "O"."ST_TYPE", count(1), max("O"."DT_CRE"), min("O"."DT_CRE")
+        from "TB_OBJ" as "O" join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
+        group by "P"."ID", "P"."TX_NAME", "O"."ST_TYPE"
+        order by "P"."TX_NAME", "O"."ST_TYPE" desc;
+
     """
     def __init__(self, p_pool, p_long_token, p_long_token_expiry, p_background_task):
         #: Local copy of the FB long-duration access token.
@@ -189,16 +197,28 @@ class BulkDownloader:
         # Positioning this flag will stop all threads (hopefully).
         self.m_threads_proceed = False
 
-        # stopping OCR thread (10 seconds timeout)
-        self.m_ocr_thread.join(10.0)
-        if self.m_ocr_thread.is_alive():
-            self.m_logger.critical('Could not stop ocr thread ....')
-            exit(0)
-
-        # stopping OCR thread (10 seconds timeout)
+        # stopping image thread (10 seconds timeout)
         self.m_image_fetch_thread.join(10.0)
         if self.m_image_fetch_thread.is_alive():
             self.m_logger.critical('Could not stop image fetch thread ....')
+            exit(0)
+
+        # stopping post update thread (10 seconds timeout)
+        self.m_posts_update_thread.join(10.0)
+        if self.m_posts_update_thread.is_alive():
+            self.m_logger.critical('Could not stop post update fetch thread ....')
+            exit(0)
+
+        # stopping likes detail download thread (10 seconds timeout)
+        self.m_likes_details_thread.join(10.0)
+        if self.m_likes_details_thread.is_alive():
+            self.m_logger.critical('Could not stop likes detail download fetch thread ....')
+            exit(0)
+
+        # stopping OCR thread (5 minutes timeout)
+        self.m_ocr_thread.join(60.0 * 5)
+        if self.m_ocr_thread.is_alive():
+            self.m_logger.critical('Could not stop ocr thread ....')
             exit(0)
 
     def bulk_download(self):
@@ -213,7 +233,7 @@ class BulkDownloader:
         # self.m_browserDriver.get_fb_token()
 
         self.get_pages()
-        # self.get_posts()
+        self.get_posts()
         # self.update_posts()
         # self.get_likes_detail()
 
@@ -336,7 +356,10 @@ class BulkDownloader:
         # select all pages from TB_PAGES
         try:
             l_cursor.execute("""
-                select "ID", "TX_NAME" from "TB_PAGES" order by "DT_CRE";
+                select "ID", "TX_NAME" 
+                from "TB_PAGES"
+                where "F_DNL" = 'Y'  
+                order by "DT_CRE";
             """)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query))
@@ -859,6 +882,10 @@ class BulkDownloader:
 
             # loop through the posts obtained from the DB
             for l_post_id, l_page_id, l_comment_flag in l_cursor:
+                # thread abort
+                if not self.m_threads_proceed:
+                    break
+
                 self.m_postRetrieved += 1
                 # get post data
                 l_field_list = 'id,created_time,from,story,message,' + \
@@ -925,11 +952,13 @@ class BulkDownloader:
                 if EcAppParam.gcm_verboseModeOn:
                     self.m_logger.info('likes       : {0}'.format(l_like_count))
 
-                if l_comment_flag == 'X' and self.updateObject(
-                        l_post_id, l_shares, l_like_count, l_name, l_caption, l_description, l_story, l_message):
-                    # get comments if l_comment_flag is set and the post update was successful
-                    self.get_comments(l_post_id, l_post_id, l_page_id, 0)
+                l_update_ok = self.updateObject(
+                    l_post_id, l_shares, l_like_count, l_name, l_caption, l_description, l_story, l_message)
 
+                # get comments if l_comment_flag is set and the post update was successful
+                if l_update_ok and l_comment_flag == 'X':
+                    self.get_comments(l_post_id, l_post_id, l_page_id, 0)
+            # end loop: for l_post_id, l_page_id, l_comment_flag in l_cursor:
         except Exception as e:
             self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('Post Update Unknown Exception: {0}'.format(repr(e)))
@@ -1012,7 +1041,12 @@ class BulkDownloader:
             for l_id, l_internal_id, l_dt_msg in l_cursor:
                 # l_id: FB ID
                 # l_internal_id: DB ID
-                self.m_logger.info('{0}/{1}'.format(l_obj_count, l_total_count), l_id, '--->')
+
+                # thread abort
+                if not self.m_threads_proceed:
+                    break
+
+                self.m_logger.info('{0}/{1} {2} ----->'.format(l_obj_count, l_total_count, l_id))
 
                 # FB API request to get the list of likes for the given object
                 l_request = 'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}'.format(
@@ -1081,7 +1115,7 @@ class BulkDownloader:
 
                 self.m_logger.info('   {0}/{1} --> {2} Likes:'.format(l_obj_count, l_total_count, l_like_count))
                 l_obj_count += 1
-
+            # end loop: for l_id, l_internal_id, l_dt_msg in l_cursor:
         except Exception as e:
             self.m_logger.critical('Likes detail download Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('Likes detail download Exception: {0}'.format(repr(e)))
@@ -1110,14 +1144,22 @@ class BulkDownloader:
     def fetch_images(self):
         """
         Image fetching. Take a block of 100 records in `TB_MEDIA` and attempts to download the pictures they reference
-        (if any).
-        
+        (if any). Flags are positioned in `TB_MEDIA` if the download was completed successfully or if an error
+        occurred.
+
+        If an error was encountered during download the error message(s) end(s) up where the Base64 representation
+        of the image would normally go.
+
         :return: Nothing 
         """
         self.m_logger.info('Start fetch_images()')
 
+        # get DB connection and cursor
         l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
+
+        # load 100 `TB_MEDIA` which have an image link but have not been loaded or had an error while loading
+        # previously.
         try:
             l_cursor.execute("""
                 select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL" 
@@ -1128,15 +1170,27 @@ class BulkDownloader:
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
 
+        l_fmt_list = ['png', 'jpg', 'jpeg', 'gif', 'svg']
+        l_fmt_string = '|'.join(l_fmt_list) + '|' + \
+                       '|'.join([f.upper() for f in l_fmt_list])
+
+        # load through the batch of records
         for l_src, l_width, l_height, l_internal in l_cursor:
+            # thread abort
+            if not self.m_threads_proceed:
+                break
+
             self.m_logger.info('Src: {0}'.format(l_src))
 
-            l_match = re.search(r'/([^/]+_[no]\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))', l_src)
+            # try to isolate the image name and format from the source string
+            # l_match = re.search(r'/([^/]+_[no]\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))', l_src)
+            l_match = re.search(r'/([^/]+_[no]\.({0}))'.format(l_fmt_string), l_src)
             if l_match:
                 l_img = l_match.group(1)
                 l_fmt = l_match.group(2)
             else:
-                l_match = re.search(r'url=([^&]+\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))[&%]', l_src)
+                # l_match = re.search(r'url=([^&]+\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))[&%]', l_src)
+                l_match = re.search(r'url=([^&]+\.({0}))[&%]'.format(l_fmt_string), l_src)
                 if l_match:
                     l_img = (urllib.parse.unquote(l_match.group(1))).split('/')[-1]
                     l_fmt = l_match.group(2)
@@ -1145,74 +1199,97 @@ class BulkDownloader:
                     l_img = '__RBSFB_IMG__{0}'.format(l_internal)
                     l_fmt = ''
 
+            # final adjustments to the format data
             l_fmt = l_fmt.lower()
             l_fmt = 'jpeg' if l_fmt == 'jpg' else l_fmt
 
             if len(l_img) > 200:
                 l_img = l_img[-200:]
 
+            # make 10 attempts (max) at downloading the image
             l_attempts = 0
             l_error = False
-            l_image_txt = None
+            l_image_txt = ''
             while True:
                 l_attempts += 1
                 if l_attempts > 10:
                     if self.m_background_task.internet_check():
                         l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
                         self.m_logger.warning(l_msg)
+                        l_error = True
+                        # l_image_txt will finally contain a succession of error messages + the one below
+                        # separated by '|'
+                        l_image_txt += l_msg
+                        break
                         # raise BulkDownloaderException(l_msg)
                     else:
+                        # internet down situations do not count as attempts
                         self.m_logger.info('Internet Down. Waiting ...')
                         time.sleep(5 * 60)
                         l_attempts = 0
 
                 try:
+                    # download attempt
                     l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(l_src, timeout=20).read()))
                     if l_img_content.mode != 'RGB':
                         l_img_content = l_img_content.convert('RGB')
 
+                    # determine format from image if not found in the image name
                     if len(l_fmt) == 0:
                         l_fmt = l_img_content.format
                         l_img += '.' + l_fmt
 
-                    self.m_logger.info('   -->: [{0}] {1}'.format(l_fmt, l_img))
+                    self.m_logger.info('--> [{0}] {1}'.format(l_fmt, l_img))
 
-                    # l_img_content.save(os.path.join('./images_fb', l_img))
+                    # save image locally
+                    l_img_content.save(os.path.join('./images_fb', l_img))
 
-                    l_outputBuffer = io.BytesIO()
-                    l_img_content.save(l_outputBuffer, format=l_fmt)
-                    l_image_txt = base64.b64encode(l_outputBuffer.getvalue()).decode()
-                    self.m_logger.info('[{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
+                    # converts image to a base64 string
+                    l_output_buffer = io.BytesIO()
+                    l_img_content.save(l_output_buffer, format=l_fmt)
+                    l_image_txt = base64.b64encode(l_output_buffer.getvalue()).decode()
+                    self.m_logger.info('Base64: [{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
                     break
                 except urllib.error.URLError as e:
+                    # if a HTTP error 404 occurs --> certainty of error
                     if re.search(r'HTTPError 404', repr(e)):
                         self.m_logger.warning('Trapped urllib.error.URLError/HTTPError 404: ' + repr(e))
                         l_image_txt = repr(e)
                         l_error = True
                         break
                     else:
+                        # other type of error --> worth trying again
                         self.m_logger.info('Trapped urllib.error.URLError: ' + repr(e))
+                        l_image_txt += repr(e) + '|'
                         continue
                 except socket.timeout as e:
+                    # if download timed out --> worth trying again
                     self.m_logger.info('Trapped socket.timeout: ' + repr(e))
+                    l_image_txt += repr(e) + '|'
                     continue
                 except TypeError as e:
-                    self.m_logger.warning('Trapped TypeError (probably pillow  UserWarning: Couldn\'t ' +
-                                          ' allocate palette entry for transparency): ' + repr(e))
+                    # ???
+                    self.m_logger.warning('Trapped TypeError (probably pillow UserWarning: Could not ' +
+                                          'allocate palette entry for transparency): ' + repr(e))
                     l_image_txt = repr(e)
                     l_error = True
                     break
                 except KeyError as e:
+                    # ???
                     self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
+                    l_image_txt = repr(e)
                     l_error = True
                     break
                 except Exception as e:
                     self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
                     raise
+            # end loop: while True:
 
+            # get new DB connection and cursor to perform the write operation
             l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
             l_cursor_write = l_conn_write.cursor()
 
+            # stores the results (which may be an error) into `TB_MEDIA`
             try:
                 l_cursor_write.execute("""
                     update "TB_MEDIA"
@@ -1226,10 +1303,12 @@ class BulkDownloader:
 
             self.m_logger.info('Fetched image for internal ID: {0}'.format(l_internal))
 
+            # releases write operation DB connection and cursor
             l_cursor_write.close()
             self.m_pool.putconn(l_conn_write)
-            # end if l_img is not None:
+        # end loop: for l_src, l_width, l_height, l_internal in l_cursor:
 
+        # releases outer DB cursor and connection
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
@@ -1238,8 +1317,7 @@ class BulkDownloader:
     def repeat_ocr_image(self):
         """
         Calls :any:`BulkDownloader.ocr_images()` repeatedly, with a 30 second delay between calls. Meant to be 
-        the image OCR thread initiated in :any:`BulkDownloader.bulk_download()`. Forever loop. Thread dies with the 
-        application.
+        the image OCR thread initiated in :any:`BulkDownloader.bulk_download()`.
         
         :return: Nothing
         """
@@ -1286,6 +1364,10 @@ class BulkDownloader:
         l_img_count = 0
         l_suf_score = dict()
         for l_internal, l_base64 in l_cursor:
+            # thread abort
+            if not self.m_threads_proceed:
+                break
+
             if l_debug_messages:
                 print('+++++++++++[{0}]++++++++++++++++++++++++++++++++++++++++++++++++++++++'.format(l_img_count))
             else:

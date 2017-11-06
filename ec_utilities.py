@@ -109,7 +109,7 @@ class EcLogger(logging.Logger):
 
         # Creates the column headers for the CSV log file
         l_f_log = open(EcAppParam.gcm_logFile, 'w')
-        l_f_log.write('LOGGER_NAME;TIME;LEVEL;MODULE;FILE;FUNCTION;LINE;MESSAGE\n')
+        l_f_log.write('LOGGER_NAME;THREAD;TIME;LEVEL;MODULE;FILE;FUNCTION;LINE;MESSAGE\n')
         l_f_log.close()
 
         # registers the EcLogger class with the logging system
@@ -125,6 +125,8 @@ class EcLogger(logging.Logger):
         # Custom Formatter for the CSV file --> eliminates multiple spaces (and \r\n)
         class EcCsvFormatter(logging.Formatter):
             def format(self, p_record):
+                l_thread_name = threading.current_thread().name
+
                 l_record = logging.LogRecord(
                     p_record.name,
                     p_record.levelno,
@@ -136,7 +138,7 @@ class EcLogger(logging.Logger):
                     # p_record.args,
                     p_record.exc_info,
                     p_record.funcName,
-                    p_record.stack_info,
+                    p_record.stack_info
                 )
 
                 if LocalParam.gcm_debugToDB:
@@ -152,9 +154,10 @@ class EcLogger(logging.Logger):
                                     "ST_FILENAME",
                                     "ST_FUNCTION",
                                     "N_LINE",
-                                    "TX_MSG"
+                                    "TX_MSG", 
+                                    "ST_THREAD"
                                 )
-                                values(%s, %s, %s, %s, %s, %s, %s);
+                                values(%s, %s, %s, %s, %s, %s, %s, %s);
                             """, (
                             p_record.name,
                             p_record.levelname,
@@ -162,7 +165,8 @@ class EcLogger(logging.Logger):
                             p_record.pathname,
                             p_record.funcName,
                             p_record.lineno,
-                            re.sub('\s+', ' ', p_record.msg)
+                            re.sub('\s+', ' ', p_record.msg),
+                            l_thread_name[:10]
                         ))
                         l_conn1.commit()
                     except psycopg2.Error as e1:
@@ -182,6 +186,7 @@ class EcLogger(logging.Logger):
         class EcConsoleFormatter(logging.Formatter):
             def format(self, p_record):
                 l_formatted = super().format(p_record)
+                l_thread_name = threading.current_thread().name
 
                 # this test is located here and not in the CSV formatter so that it does not get to be performed
                 # needlessly for every debug message
@@ -209,9 +214,10 @@ class EcLogger(logging.Logger):
                                 "ST_FILENAME",
                                 "ST_FUNCTION",
                                 "N_LINE",
-                                "TX_MSG"
+                                "TX_MSG",
+                                "ST_THREAD"
                             )
-                            values(%s, %s, %s, %s, %s, %s, %s, %s);
+                            values(%s, %s, %s, %s, %s, %s, %s, %s, %s);
                         """, (
                             'LOG',
                             p_record.name,
@@ -220,7 +226,8 @@ class EcLogger(logging.Logger):
                             p_record.pathname,
                             p_record.funcName,
                             p_record.lineno,
-                            re.sub('\s+', ' ', p_record.msg)
+                            re.sub('\s+', ' ', p_record.msg),
+                            l_thread_name[:10]
                         ))
                         l_conn1.commit()
                     except psycopg2.Error as e1:
@@ -236,9 +243,10 @@ class EcLogger(logging.Logger):
                 return l_formatted
 
         # Install formatters
-        l_handler_console.setFormatter(EcConsoleFormatter('ECL:%(levelname)s:%(name)s:%(message)s'))
+        l_handler_console.setFormatter(
+            EcConsoleFormatter('ECL:%(levelname)s:%(name)s:%(threadName)s:%(funcName)s:%(message)s'))
         l_handler_file.setFormatter(
-            EcCsvFormatter('"%(name)s";"%(asctime)s";"%(levelname)s";"%(module)s";' +
+            EcCsvFormatter('"%(name)s";"%(threadName)s";"%(asctime)s";"%(levelname)s";"%(module)s";' +
                            '"%(filename)s";"%(funcName)s";%(lineno)d;"%(message)s"'))
 
         # If verbose mode on, both handlers receive messages up to INFO
