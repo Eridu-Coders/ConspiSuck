@@ -95,7 +95,7 @@ class EcRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
         # call the rest of the app to get the appropriate response
-        l_response = EcRequestHandler.cm_app.get_responseGet(self)
+        l_response = EcRequestHandler.cm_app.get_response_get(self)
 
         # and send it
         self.wfile.write(bytes(l_response, 'utf-8'))

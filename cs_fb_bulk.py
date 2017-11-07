@@ -334,9 +334,10 @@ class BulkDownloader:
 
     def get_posts(self):
         """
-        Gets the posts from all the pages in :any:`TB_PAGES`
+        Gets the posts from all the pages in `TB_PAGES`
 
-        To transfer from :any:`TB_OBJ` to :any:`TB_PAGES`:
+        To transfer from `TB_OBJ` to `TB_PAGES`:
+
         .. code-block:: sql
 
             delete from "TB_PAGES";

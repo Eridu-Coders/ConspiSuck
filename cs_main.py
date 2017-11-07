@@ -97,14 +97,14 @@ class CsBackgroundTask(threading.Thread):
         # Make sure internet is accessible and wait otherwise
         l_sleep_time = 30
         # maximum wait = 3 hours
-        l_max_attempts = int(60 * 3 * 60.0/l_sleep_time)
+        l_max_attempts = int(60 * 3 * 60.0 / l_sleep_time)
         l_attempt_counter = 0
         while not self.internet_check():
             self.m_logger.warning('Internet connection off')
 
             if l_attempt_counter >= l_max_attempts:
                 self.m_logger.critical('Tried to connect for {0:0.2f} hours. Giving up.'.format(
-                    (l_attempt_counter * l_sleep_time)/3600
+                    (l_attempt_counter * l_sleep_time) / 3600
                 ))
                 sys.exit(0)
             else:
@@ -207,9 +207,9 @@ class CsApp(EcAppCore):
         elif re.search('^/story/', p_request_handler.path):
             return self.one_story(p_request_handler)
         else:
-            return self.session_list()
+            return self.dash()
 
-    def session_list(self):
+    def dash(self):
         """
         Build the response for the "list of sessions" screen. No parameters necessary.
 
@@ -219,37 +219,102 @@ class CsApp(EcAppCore):
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
-                select
-                    A."ST_SESSION_ID"
-                    , A."DT_CRE"
-                    , B."N_STORY_COUNT"
-                    , C."ST_NAME"
-                    , C."ST_USER_ID"
-                from "TB_SESSION" A
+                select 
+                    "P"."ID", "P"."TX_NAME", 
+                    "OPT"."MIN_DT" as "PT_MIN_DT", "OPT"."MAX_DT" as "PT_MAX_DT", "OPT"."COUNT_POST" as "PT_COUNT",
+                    "OCT"."MIN_DT" as "CT_MIN_DT", "OCT"."MAX_DT" as "CT_MAX_DT", "OCT"."COUNT_COMM" as "CT_COUNT",
+                    "OPM"."MIN_DT" as "PM_MIN_DT", "OPM"."MAX_DT" as "PM_MAX_DT", "OPM"."COUNT_POST" as "PM_COUNT",
+                    "OCM"."MIN_DT" as "CM_MIN_DT", "OCM"."MAX_DT" as "CM_MAX_DT", "OCM"."COUNT_COMM" as "CM_COUNT",
+                    "OPY"."MIN_DT" as "PY_MIN_DT", "OPY"."MAX_DT" as "PY_MAX_DT", "OPY"."COUNT_POST" as "PY_COUNT",
+                    "OCY"."MIN_DT" as "CY_MIN_DT", "OCY"."MAX_DT" as "CY_MAX_DT", "OCY"."COUNT_COMM" as "CY_COUNT"
+                from
+                    "TB_PAGES" as "P"
                     join (
-                        select "ST_SESSION_ID", count(1) as "N_STORY_COUNT"
-                        from "TB_STORY"
-                        group by "ST_SESSION_ID"
-                    ) B on A."ST_SESSION_ID" = B."ST_SESSION_ID"
-                    join "TB_USER" C on C."ID_INTERNAL" = A."ID_INTERNAL"
-                order by "DT_CRE" desc
-                limit {0};
-            """.format(EcAppParam.gcm_sessionDisplayCount))
+                        select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Post'
+                        group by "ID_PAGE"
+                    ) as "OPT" on "P"."ID" = "OPT"."ID_PAGE"
+                    left outer join (
+                        select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Comm'
+                        group by "ID_PAGE"
+                    ) as "OCT" on "P"."ID" = "OCT"."ID_PAGE"
+                    left outer join (
+                        select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 30
+                        group by "ID_PAGE"
+                    ) as "OPM" on "P"."ID" = "OPM"."ID_PAGE"
+                    left outer join (
+                        select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 30
+                        group by "ID_PAGE"
+                    ) as "OCM" on "P"."ID" = "OCM"."ID_PAGE"
+                    left outer join (
+                        select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 365
+                        group by "ID_PAGE"
+                    ) as "OPY" on "P"."ID" = "OPY"."ID_PAGE"
+                    left outer join (
+                        select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 365
+                        group by "ID_PAGE"
+                    ) as "OCY" on "P"."ID" = "OCY"."ID_PAGE";
+            """)
 
             l_response = ''
-            for l_sessionId, l_dtCre, l_count, l_userName, l_userId in l_cursor:
+            for \
+                    l_page_id, l_page_name, \
+                    l_dmin_pt, l_dmax_pt, l_count_pt, \
+                    l_dmin_ct, l_dmax_ct, l_count_ct, \
+                    l_dmin_pm, l_dmax_pm, l_count_pm, \
+                    l_dmin_cm, l_dmax_cm, l_count_cm, \
+                    l_dmin_py, l_dmax_py, l_count_py, \
+                    l_dmin_cy, l_dmax_cy, l_count_cy in l_cursor:
+
+                l_dmin = l_dmin_pt
+                if l_dmin_ct is not None and l_dmin_ct < l_dmin:
+                    l_dmin = l_dmin_ct
+                l_dmax = l_dmax_pt
+                if l_dmax_ct is not None and l_dmax_ct > l_dmax:
+                    l_dmax = l_dmax_ct
+
+                def display_ratio(p_comments, p_posts):
+                    if p_posts is None or p_comments is None:
+                        return 'n/a'
+                    else:
+                        return '{0:.1f}'.format(p_comments/p_posts)
+
                 l_response += """
                     <tr>
                         <td>{0}</td>
                         <td>{1}</td>
-                        <td><a href="/session/{2}">{2}</a></td>
+                        <td>{2}</td>
                         <td>{3}</td>
                         <td style="text-align: center;">{4}</td>
+                        <td style="text-align: center;">{5}</td>
+                        <td style="text-align: center;">{6}</td>
+                        <td style="text-align: center;">{7}</td>
+                        <td style="text-align: center;">{8}</td>
+                        <td style="text-align: center;">{9}</td>
+                        <td style="text-align: center;">{10}</td>
+                        <td style="text-align: center;">{11}</td>
+                        <td style="text-align: center;">{12}</td>
                     <tr/>
                 """.format(
-                    l_userName, l_userId, l_sessionId, l_dtCre.strftime('%d/%m/%Y %H:%M'), l_count)
+                    l_page_id, l_page_name,
+                    l_dmin.strftime('%d/%m/%Y %H:%M'), l_dmax.strftime('%d/%m/%Y %H:%M'),
+                    l_count_pt, l_count_ct, display_ratio(l_count_ct, l_count_pt),
+                    l_count_py, l_count_cy, display_ratio(l_count_cy, l_count_py),
+                    l_count_pm, l_count_cm, display_ratio(l_count_cm, l_count_pm)
+                )
         except Exception as e:
-            self.m_logger.warning('TB_SESSION query failure: {0}'.format(repr(e)))
+            self.m_logger.warning('Page stats query failure: {0}'.format(repr(e)))
             raise
 
         l_cursor.close()
@@ -258,15 +323,45 @@ class CsApp(EcAppCore):
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
             <head>
                 <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                <style>
+                    table, th, td {{
+                        border: 1px solid black;
+                    }}
+                    th, td {{
+                        padding: 5pt;
+                    }}
+                    th {{
+                        font-weight: bold;
+                        font-family: sans-serif;
+                    }}
+                    td {{
+                        font-family: monospace;
+                    }}
+                </style>
             </head>
             <body>
-                <table>
+                <table style="border-collapse: collapse;">
                     <tr>
-                        <td style="font-weight: bold;">ST_NAME</td>
-                        <td style="font-weight: bold;">ST_USER_ID</td>
-                        <td style="font-weight: bold;">ST_SESSION_ID</td>
-                        <td style="font-weight: bold;">DT_CRE</td>
-                        <td style="font-weight: bold;">N_STORY_COUNT</td>
+                        <th style="text-align: center;" colspan="2">Page</td>
+                        <th style="text-align: center;" colspan="2">Dates</td>
+                        <th style="text-align: center;" colspan="3">Total</td>
+                        <th style="text-align: center;" colspan="3">Year</td>
+                        <th style="text-align: center;" colspan="3">Month</td>
+                    <tr/>
+                    <tr>
+                        <th>ID</td>
+                        <th>Name</td>
+                        <th>Min</td>
+                        <th>Max</td>
+                        <th>Posts</td>
+                        <th>Comments</td>
+                        <th>Ratio</td>
+                        <th>Posts</td>
+                        <th>Comments</td>
+                        <th>Ratio</td>
+                        <th>Posts</td>
+                        <th>Comments</td>
+                        <th>Ratio</td>
                     <tr/>
                     {0}
                 </table>
@@ -296,7 +391,7 @@ class CsApp(EcAppCore):
 
             l_response = ''
             for l_id_story, l_session_id, l_dt_story, l_dt_cre, l_st_type, \
-                    l_json, l_likes, l_comments, l_shares in l_cursor:
+                l_json, l_likes, l_comments, l_shares in l_cursor:
 
                 l_story = json.loads(l_json)
                 l_img_count = len(l_story['images'])
@@ -381,7 +476,7 @@ class CsApp(EcAppCore):
 
             l_response = ''
             for l_idStory, l_sessionId, l_dtStory, l_dtCre, \
-                    l_stType, l_json, l_likes, l_comments, l_shares in l_cursor:
+                l_stType, l_json, l_likes, l_comments, l_shares in l_cursor:
 
                 l_story = json.loads(l_json)
 
