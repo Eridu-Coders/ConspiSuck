@@ -202,8 +202,8 @@ class CsApp(EcAppCore):
                     </body>
                 </html>
             """
-        elif re.search('^/session/', p_request_handler.path):
-            return self.one_session(p_request_handler)
+        elif re.search('^/page/', p_request_handler.path):
+            return self.one_page(p_request_handler)
         elif re.search('^/story/', p_request_handler.path):
             return self.one_story(p_request_handler)
         else:
@@ -293,7 +293,7 @@ class CsApp(EcAppCore):
                 l_response += """
                     <tr>
                         <td>{0}</td>
-                        <td>{1}</td>
+                        <td><a href="/page/{0}/{13}/{14}">{1}</a></td>
                         <td>{2}</td>
                         <td>{3}</td>
                         <td style="text-align: center;">{4}</td>
@@ -311,7 +311,9 @@ class CsApp(EcAppCore):
                     l_dmin.strftime('%d/%m/%Y %H:%M'), l_dmax.strftime('%d/%m/%Y %H:%M'),
                     l_count_pt, l_count_ct, display_ratio(l_count_ct, l_count_pt),
                     l_count_py, l_count_cy, display_ratio(l_count_cy, l_count_py),
-                    l_count_pm, l_count_cm, display_ratio(l_count_cm, l_count_pm)
+                    l_count_pm, l_count_cm, display_ratio(l_count_cm, l_count_pm),
+                    datetime.datetime.now().strftime('%Y.%m.%d'),
+                    (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y.%m.%d')
                 )
         except Exception as e:
             self.m_logger.warning('Page stats query failure: {0}'.format(repr(e)))
@@ -369,63 +371,88 @@ class CsApp(EcAppCore):
             </html>
         """.format(l_response)
 
-    def one_session(self, p_request_handler):
+    def one_page(self, p_request_handler):
         """
         Build the HTML for an individual session screen, i.e. the list of stories retrieved from that session.
 
         :param p_request_handler: The :any:`EcRequestHandler` instance providing the session ID parameter.
         :return: The Session HTML.
         """
-        # the session ID is the last member of the URL
-        l_session_id = re.sub('/session/', '', p_request_handler.path)
-        self.m_logger.info('l_sessionId: {0}'.format(l_session_id))
+        l_match = re.search(r'/page/(\d+)/([\d\.]+)/([\d\.]+)', p_request_handler.path)
+        if l_match:
+            l_page_id = l_match.group(1)
+            l_date_max = datetime.datetime.strptime(l_match.group(2), '%Y.%m.%d') + datetime.timedelta(days=1)
+            l_date_min = datetime.datetime.strptime(l_match.group(3), '%Y.%m.%d')
+
+            self.m_logger.info('l_page_id : {0}'.format(l_page_id))
+            self.m_logger.info('l_date_max: {0}'.format(l_date_max))
+            self.m_logger.info('l_date_min: {0}'.format(l_date_min))
+        else:
+            return """
+                    <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
+                    <head>
+                        <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                    </head>
+                    <body>
+                        <h1>Cannot extract Page ID + 2 dates from: {0}</h1>
+                    </body>
+                    </html>
+                """.format(p_request_handler.path)
+
         l_conn = self.m_connectionPool.getconn('oneSession()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
-                        select *
-                        from "TB_STORY"
-                        where "ST_SESSION_ID" = '{0}'
-                        order by "ID_STORY";
-                    """.format(l_session_id))
+                        select 
+                            "ID",
+                            "ST_FB_TYPE",
+                            "TX_NAME",
+                            "TX_CAPTION", 
+                            "TX_DESCRIPTION",
+                            "TX_STORY",
+                            "TX_MESSAGE"
+                        from "TB_OBJ"
+                        where 
+                            "ID_PAGE" = %s
+                            and "ST_TYPE" = 'Post'
+                            and "DT_CRE" < %s
+                            and "DT_CRE" >= %s
+                        order by "ID";
+                    """,
+                             #(l_page_id, l_date_max.strftime('%Y-%m-%d'), l_date_min.strftime('%Y-%m-%d'))
+                             (l_page_id, l_date_max, l_date_min)
+                             )
+
+            self.m_logger.info('SQL: ' + l_cursor.query.decode('utf-8'))
 
             l_response = ''
-            for l_id_story, l_session_id, l_dt_story, l_dt_cre, l_st_type, \
-                l_json, l_likes, l_comments, l_shares in l_cursor:
+            for l_id_post, l_fb_type, l_name, l_caption, l_desc, l_story, l_message in l_cursor:
 
-                l_story = json.loads(l_json)
-                l_img_count = len(l_story['images'])
-                l_text = l_story['text'][:50]
-                if len(l_text) != len(l_story['text']):
-                    l_text += '...'
-                l_text_q = l_story['text_quoted'][:50]
-                if len(l_text_q) != len(l_story['text_quoted']):
-                    l_text_q += '...'
-                if len(l_text + l_text_q) > 0:
-                    l_display_text = l_text + '■■■' + l_text_q
-                else:
-                    l_display_text = ''
+                def cut_max(s, p_max_len):
+                    if s is None or len(s) == 0:
+                        return ''
+                    elif len(s) < p_max_len:
+                        return s
+                    else:
+                        return s[:p_max_len] + '...'
+
+                l_name = cut_max(l_name, 30)
+                l_caption = cut_max(l_caption, 30)
+                l_desc = cut_max(l_desc, 30)
+                l_story = cut_max(l_story, 30)
+                l_message = cut_max(l_message, 100)
+
+                l_display_text = '■'.join([l_name, l_caption, l_desc, l_story, l_message])
 
                 l_response += """
                             <tr>
-                                <td style="padding-right:1em;"><a href="/story/{0}">{0}</a></td>
+                                <td style="padding-right:1em;">{0}</td>
                                 <td style="padding-right:1em;">{1}</td>
                                 <td style="padding-right:1em;">{2}</td>
-                                <td style="padding-right:1em;">{3}</td>
-                                <td style="padding-right:1em;">{4}</td>
-                                <td style="padding-right:1em;">{5}</td>
-                                <td style="padding-right:1em;">{6}</td>
-                                <td style="padding-right:1em;">{7}</td>
-                                <td>{8}</td>
                             <tr/>
-                        """.format(
-                    l_id_story,
-                    l_dt_story.strftime('%d/%m/%Y&nbsp;%H:%M') if l_dt_story is not None else 'NULL',
-                    l_dt_cre.strftime('%d/%m/%Y&nbsp;%H:%M'),
-                    l_st_type, l_likes, l_comments, l_shares, l_img_count, l_display_text
-                )
+                        """.format(l_id_post, l_fb_type, l_display_text)
         except Exception as e:
-            self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
+            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
             raise
 
         l_cursor.close()
@@ -439,21 +466,15 @@ class CsApp(EcAppCore):
                         <h1>Session: {0}</h1>
                         <table>
                             <tr>
-                                <td style="font-weight: bold; padding-right:1em;">ID_STORY</td>
-                                <td style="font-weight: bold; padding-right:1em;">DT_STORY</td>
-                                <td style="font-weight: bold; padding-right:1em;">DT_CRE</td>
-                                <td style="font-weight: bold; padding-right:1em;">ST_TYPE</td>
-                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">N_LIKES</td>
-                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">N_COMMENTS</td>
-                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">N_SHARES</td>
-                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">Img.&nbsp;#</td>
-                                <td style="font-weight: bold;">Text■■■Quoted text</td>
+                                <td style="font-weight: bold; padding-right:1em;">Post ID</td>
+                                <td style="font-weight: bold; padding-right:1em;">FB Type</td>
+                                <td style="font-weight: bold; padding-right:1em;">Text</td>
                             <tr/>
                             {1}
                         </table>
                     </body>
                     </html>
-                """.format(l_session_id, l_response)
+                """.format(p_request_handler.path, l_response)
 
     def one_story(self, p_request_handler):
         """
