@@ -204,8 +204,8 @@ class CsApp(EcAppCore):
             """
         elif re.search('^/page/', p_request_handler.path):
             return self.one_page(p_request_handler)
-        elif re.search('^/story/', p_request_handler.path):
-            return self.one_story(p_request_handler)
+        elif re.search('^/post/', p_request_handler.path):
+            return self.one_post(p_request_handler)
         else:
             return self.dash()
 
@@ -330,7 +330,10 @@ class CsApp(EcAppCore):
                         border: 1px solid black;
                     }}
                     th, td {{
-                        padding: 5pt;
+                        padding-left: 5pt;
+                        padding-right: 5pt;
+                        padding-top: 2pt;
+                        padding-bottom: 2pt;
                     }}
                     th {{
                         font-weight: bold;
@@ -404,20 +407,38 @@ class CsApp(EcAppCore):
         try:
             l_cursor.execute("""
                         select 
-                            "ID",
-                            "ST_FB_TYPE",
-                            "TX_NAME",
-                            "TX_CAPTION", 
-                            "TX_DESCRIPTION",
-                            "TX_STORY",
-                            "TX_MESSAGE"
-                        from "TB_OBJ"
+                            "O"."ID",
+                            "O"."ST_FB_TYPE",
+                            "O"."ST_FB_STATUS_TYPE",
+                            "O"."DT_CRE",
+                            "O"."TX_NAME",
+                            "O"."TX_CAPTION", 
+                            "O"."TX_DESCRIPTION",
+                            "O"."TX_STORY",
+                            "O"."TX_MESSAGE",
+                            "O"."N_LIKES",
+                            "O"."N_SHARES",
+                            "C"."COMM_COUNT",
+                            "M"."MEDIA_COUNT"
+                        from 
+                            "TB_OBJ" as "O" 
+                            join (
+                                select "ID_POST", count(1) as "COMM_COUNT"
+                                from "TB_OBJ"
+                                where "ST_TYPE" = 'Comm'
+                                group by "ID_POST"
+                            ) as "C" on "O"."ID" = "C"."ID_POST"
+                            left outer join (
+                                select "ID_OWNER", count(1) as "MEDIA_COUNT"
+                                from "TB_MEDIA"
+                                group by "ID_OWNER"
+                            ) as "M" on "O"."ID" = "M"."ID_OWNER"
                         where 
-                            "ID_PAGE" = %s
-                            and "ST_TYPE" = 'Post'
-                            and "DT_CRE" < %s
-                            and "DT_CRE" >= %s
-                        order by "ID";
+                            "O"."ID_PAGE" = %s
+                            and "O"."ST_TYPE" = 'Post'
+                            and "O"."DT_CRE" < %s
+                            and "O"."DT_CRE" >= %s
+                        order by "O"."DT_CRE" desc;
                     """,
                              #(l_page_id, l_date_max.strftime('%Y-%m-%d'), l_date_min.strftime('%Y-%m-%d'))
                              (l_page_id, l_date_max, l_date_min)
@@ -426,7 +447,20 @@ class CsApp(EcAppCore):
             self.m_logger.info('SQL: ' + l_cursor.query.decode('utf-8'))
 
             l_response = ''
-            for l_id_post, l_fb_type, l_name, l_caption, l_desc, l_story, l_message in l_cursor:
+            for l_id_post, \
+                l_fb_type, \
+                l_fb_status_type, \
+                l_dt, \
+                l_name, \
+                l_caption, \
+                l_desc, \
+                l_story, \
+                l_message, \
+                l_likes, \
+                l_shares,\
+                l_comm_count,\
+                l_media_count \
+                    in l_cursor:
 
                 def cut_max(s, p_max_len):
                     if s is None or len(s) == 0:
@@ -440,161 +474,32 @@ class CsApp(EcAppCore):
                 l_caption = cut_max(l_caption, 30)
                 l_desc = cut_max(l_desc, 30)
                 l_story = cut_max(l_story, 30)
-                l_message = cut_max(l_message, 100)
+                l_message = cut_max(l_message, 50)
 
                 l_display_text = '■'.join([l_name, l_caption, l_desc, l_story, l_message])
 
                 l_response += """
                             <tr>
-                                <td style="padding-right:1em;">{0}</td>
-                                <td style="padding-right:1em;">{1}</td>
-                                <td style="padding-right:1em;">{2}</td>
+                                <td><a href="https://www.facebook.com/{0}" target="_blank">{1}</a></td>
+                                <td><a href="/post/{0}" target="_blank">{2}</a></td>
+                                <td>{3}</td>
+                                <td>{4}</td>
+                                <td>{5}</td>
+                                <td>{6}</td>
+                                <td>{7}</td>
                             <tr/>
-                        """.format(l_id_post, l_fb_type, l_display_text)
-        except Exception as e:
-            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
-            raise
-
-        l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
-        return """
-                    <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
-                    <head>
-                        <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
-                    </head>
-                    <body>
-                        <h1>Session: {0}</h1>
-                        <table>
-                            <tr>
-                                <td style="font-weight: bold; padding-right:1em;">Post ID</td>
-                                <td style="font-weight: bold; padding-right:1em;">FB Type</td>
-                                <td style="font-weight: bold; padding-right:1em;">Text</td>
-                            <tr/>
-                            {1}
-                        </table>
-                    </body>
-                    </html>
-                """.format(p_request_handler.path, l_response)
-
-    def one_story(self, p_request_handler):
-        """
-        Build the HTML for an individual story screen.
-
-        :param p_request_handler: The :any:`EcRequestHandler` instance providing the story ID parameter.
-        :return: The story HTML.
-        """
-        # the story ID is the last member of the URL
-        l_story_id = re.sub('/story/', '', p_request_handler.path)
-        self.m_logger.info('l_storyId: {0}'.format(l_story_id))
-        l_conn = self.m_connectionPool.getconn('oneStory()')
-        l_cursor = l_conn.cursor()
-        try:
-            l_cursor.execute("""
-                                select *
-                                from "TB_STORY"
-                                where "ID_STORY" = {0};
-                            """.format(l_story_id))
-
-            l_response = ''
-            for l_idStory, l_sessionId, l_dtStory, l_dtCre, \
-                l_stType, l_json, l_likes, l_comments, l_shares in l_cursor:
-
-                l_story = json.loads(l_json)
-
-                # <img src="data:image/jpeg;base64,
-                l_img_display = ''
-                for l_imgB64 in l_story['images']:
-                    l_img_display += """
-                        <img src="data:image/png;base64,{0}">
-                    """.format(l_imgB64)
-
-                l_html_disp = l_story['html'] if 'html' in l_story.keys() else ''
-                l_html_disp = re.sub(r'<', r'&lt;', l_html_disp)
-                l_html_disp = re.sub(r'>', r'&gt;&#8203;', l_html_disp)
-                # l_html_disp = re.sub(r'>', r'&gt; ', l_html_disp)
-
-                l_likes = ''
-                if 'likes' in l_story.keys():
-                    l_likes = repr(l_story['likes'])
-
-                l_response += """
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">ID_STORY</td>
-                        <td>{0}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Text:</td>
-                        <td>{1}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Text&nbsp;quoted:</td>
-                        <td>{2}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Type:</td>
-                        <td>{3}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">From:</td>
-                        <td>{4}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Date:</td>
-                        <td>{5}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Quoted&nbsp;date(s):</td>
-                        <td>{6}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Shared&nbsp;Item(s):</td>
-                        <td>{7}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Sponsored:</td>
-                        <td>{8}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">With:</td>
-                        <td>{9}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Likes:</td>
-                        <td>{10}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Comments:</td>
-                        <td>[{11}] {12}</td>
-                    <tr/>
-                    <tr>
-                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Shares:</td>
-                        <td>{13}</td>
-                    <tr/>
-                    <tr>
-                        <td colspan="2">{14}</td>
-                    <tr/>
-                    <tr>
-                        <td colspan="2" style="word-wrap:break-word;">{15}</td>
-                    <tr/>
-                """.format(
-                    l_idStory,
-                    l_story['text'],
-                    l_story['text_quoted'],
-                    l_story['type'],
-                    repr(l_story['from_list']),
-                    l_story['date'],
-                    repr(l_story['date_quoted']),
-                    repr(l_story['shared']),
-                    'Yes' if l_story['sponsored'] else 'No',
-                    'Yes' if l_story['with'] else 'No',
+                        """.format(
+                    l_id_post,
+                    l_dt.strftime('%d/%m/%Y %H:%M'),
+                    l_fb_type + ('/' + l_fb_status_type if len(l_fb_status_type) > 0 else ''),
                     l_likes,
-                    l_comments, repr(l_story['comments']) if 'comments' in l_story.keys() else '',
-                    l_story['shares'] if 'shares' in l_story.keys() else '',
-                    l_img_display,
-                    l_html_disp
+                    l_shares,
+                    l_comm_count,
+                    l_media_count if l_media_count is not None else '',
+                    l_display_text
                 )
         except Exception as e:
-            self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
+            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
             raise
 
         l_cursor.close()
@@ -603,9 +508,200 @@ class CsApp(EcAppCore):
                 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
                 <head>
                     <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                    <style>
+                        th, td {{
+                            padding-right: 1em;
+                        }}
+                        th {{
+                            font-weight: bold;
+                            font-family: sans-serif;
+                            text-align: left;
+                        }}
+                        td {{
+                            font-family: monospace;
+                        }}
+                    </style>
                 </head>
-                <body style="font-family: sans-serif;">
-                    <table>{0}</table>
+                <body>
+                    <h1>Page: {0}</h1>
+                    <table>
+                        <tr>
+                            <th>Date</th>
+                            <th>FB Type</th>
+                            <th>Likes</th>
+                            <th>Shares</th>
+                            <th>Comm.</th>
+                            <th>Media</th>
+                            <th>Text</th>
+                        <tr/>
+                        {1}
+                    </table>
                 </body>
                 </html>
-            """.format(l_response)
+                """.format(p_request_handler.path, l_response)
+
+    def one_post(self, p_request_handler):
+        """
+        Build the HTML for an individual story screen.
+
+        :param p_request_handler: The :any:`EcRequestHandler` instance providing the story ID parameter.
+        :return: The story HTML.
+        """
+
+        # the story ID is the last member of the URL
+        l_post_id = re.sub('/post/', '', p_request_handler.path)
+        self.m_logger.info('l_post_id: {0}'.format(l_post_id))
+        l_conn = self.m_connectionPool.getconn('oneStory()')
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute(
+                """
+                    select 
+                        "O"."ST_FB_TYPE",
+                        "O"."ST_FB_STATUS_TYPE",
+                        "O"."DT_CRE",
+                        "O"."TX_NAME",
+                        "O"."TX_CAPTION", 
+                        "O"."TX_DESCRIPTION",
+                        "O"."TX_STORY",
+                        "O"."TX_MESSAGE",
+                        "O"."N_LIKES",
+                        "O"."N_SHARES",
+                        "M"."TX_TARGET",
+                        "M"."TX_BASE64"
+                    from 
+                        "TB_OBJ" as "O"
+                        left outer join (
+                            select 
+                                "ID_OWNER",
+                                "TX_TARGET",
+                                "TX_BASE64"
+                            from "TB_MEDIA"
+                        ) as "M" on "O"."ID" = "M"."ID_OWNER"
+                    where "ID" = %s;
+                """, (l_post_id,)
+            )
+
+            l_response = ''
+            for l_fb_type, \
+                l_fb_status_type, \
+                l_dt, \
+                l_name, \
+                l_caption, \
+                l_desc, \
+                l_story, \
+                l_message, \
+                l_likes, \
+                l_shares,\
+                l_media_target,\
+                l_base_64\
+                    in l_cursor:
+
+                # l_img_display = ''
+                # for l_imgB64 in l_story['images']:
+                #    l_img_display += """
+                #        <img src="data:image/png;base64,{0}">
+                #    """.format(l_imgB64)
+
+                # <tr>
+                #    <td colspan="2">{14}</td>
+                # <tr/>
+                # <tr>
+                #    <td colspan="2" style="word-wrap:break-word;">{15}</td>
+                # <tr/>
+
+                l_response += """
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">ID</td>
+                        <td>{0}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">FB&nbsp;Type</td>
+                        <td>{1}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; 
+                            font-weight: bold; vertical-align: top;">FB&nbsp;Statust&nbsp;Type</td>
+                        <td>{2}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Date:</td>
+                        <td>{3}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Name:</td>
+                        <td>{4}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Caption:</td>
+                        <td>{5}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Description:</td>
+                        <td>{6}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Story:</td>
+                        <td>{7}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Message:</td>
+                        <td>{8}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Likes/Shares:</td>
+                        <td>{9}/{10}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; 
+                            font-weight: bold; vertical-align: top;">Media&nbsp;Target:</td>
+                        <td>{11}</td>
+                    <tr/>
+                    <tr>
+                        <td colspan="2">{12}</td>
+                    <tr/>
+                """.format(
+                    l_post_id,
+                    l_fb_type,
+                    l_fb_status_type,
+                    l_dt.strftime('%d/%m/%Y %H:%M'),
+                    l_name,
+                    l_caption,
+                    l_desc,
+                    l_story,
+                    l_message,
+                    l_likes,
+                    l_shares,
+                    l_media_target,
+                    '<img src="data:image/jpeg;base64,{0}" >'.format(l_base_64) if l_base_64 is not None else ''
+                )
+        except Exception as e:
+            self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
+            raise
+
+        l_cursor.close()
+        self.m_connectionPool.putconn(l_conn)
+        return """
+            <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
+            <head>
+                <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                <style>
+                    table, td {{
+                        border: 1px solid black;
+                    }}
+                    td {{
+                        padding-left: 5pt;
+                        padding-right: 5pt;
+                        padding-top: 2pt;
+                        padding-bottom: 2pt;
+                        font-family: monospace;
+                    }}
+                </style>
+            </head>
+            <body>
+                <table style="border-collapse: collapse;">
+                    {0}
+                </table>
+            </body>
+            </html>
+        """.format(l_response)
