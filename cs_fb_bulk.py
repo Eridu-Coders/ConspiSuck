@@ -159,21 +159,21 @@ class BulkDownloader:
         """
         # posts update thread
         self.m_posts_update_thread = Thread(target=self.repeat_posts_update)
-        # One-letter name for the Image thread
+        # One-letter name for the posts update thread
         self.m_posts_update_thread.name = 'U'
-        self.m_posts_update_thread.start()
+        # self.m_posts_update_thread.start()
         self.m_logger.info('Posts update thread launched')
 
-        # posts update thread
+        # likes details download thread
         self.m_likes_details_thread = Thread(target=self.repeat_get_likes_details)
-        # One-letter name for the Image thread
+        # One-letter name for the likes details download thread
         self.m_likes_details_thread.name = 'L'
-        self.m_likes_details_thread.start()
+        # self.m_likes_details_thread.start()
         self.m_logger.info('Likes details thread launched')
 
         # Image fetching thread
         self.m_image_fetch_thread = Thread(target=self.repeat_fetch_images)
-        # One-letter name for the Image thread
+        # One-letter name for the Image fetching thread
         self.m_image_fetch_thread.name = 'I'
         self.m_image_fetch_thread.start()
         self.m_logger.info('Image fetch thread launched')
@@ -184,7 +184,7 @@ class BulkDownloader:
             self.m_ocr_thread = Thread(target=self.repeat_ocr_image)
             # One-letter name for the OCR thread
             self.m_ocr_thread.name = 'O'
-            self.m_ocr_thread.start()
+            #self.m_ocr_thread.start()
             self.m_logger.info('Image OCR thread started')
 
     def stop_threads(self):
@@ -232,10 +232,11 @@ class BulkDownloader:
         # self.m_logger.info('Getting FB token')
         # self.m_browserDriver.get_fb_token()
 
-        self.get_pages()
+        # self.get_pages()
         self.get_posts()
         # self.update_posts()
         # self.get_likes_detail()
+        time.sleep(60 * 60)
 
         self.m_logger.info('End bulk_download()')
 
@@ -389,9 +390,9 @@ class BulkDownloader:
         """
         self.m_logger.info('Start getPostsFromPage()')
 
-        l_field_list = 'id,caption,created_time,description,from,icon,link,message,message_tags,name,object_id,' + \
-                       'permalink_url,picture,place,properties,shares,source,status_type,story,to,type,' + \
-                       'updated_time,with_tags'
+        l_field_list = 'id,application,caption,created_time,description,from,icon,link,message,message_tags,name,' + \
+                       'object_id,parent_id,permalink_url,picture,full_picture,place,properties,shares,' + \
+                       'source,status_type,story,to,type,updated_time,with_tags'
 
         # API request: get all posts from the page :any:`p_id` in batches of size :any:`gcm_limit`
         l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&access_token={3}&fields={4}'.format(
@@ -464,8 +465,10 @@ class BulkDownloader:
                 l_message, l_message_short = BulkDownloader.getOptionalField(l_post, 'message')
 
                 l_object_id, x = BulkDownloader.getOptionalField(l_post, 'object_id')
+                l_parent_id, x = BulkDownloader.getOptionalField(l_post, 'parent_id')
                 l_link, x = BulkDownloader.getOptionalField(l_post, 'link')
                 l_picture, x = BulkDownloader.getOptionalField(l_post, 'picture')
+                l_full_picture, x = BulkDownloader.getOptionalField(l_post, 'full_picture')
                 l_source, x = BulkDownloader.getOptionalField(l_post, 'source')
 
                 l_icon, x = BulkDownloader.getOptionalField(l_post, 'icon')
@@ -500,12 +503,16 @@ class BulkDownloader:
                     self.m_logger.info('   permalink   : ' + l_permalink_url)
                     self.m_logger.info('   icon        : ' + l_icon)
                     self.m_logger.info('   object_id   : ' + l_object_id)
+                    self.m_logger.info('   parent_id   : ' + l_parent_id)
                     self.m_logger.info('   shares      : {0}'.format(l_shares))
                     self.m_logger.info('   type        : ' + l_type)
                     self.m_logger.info('   updated time: ' + l_updated_time)
                     self.m_logger.info('   with        : {0}'.format(l_with_tags))
                     self.m_logger.info('   tags        : {0}'.format(l_tags))
                     self.m_logger.info('   place       : {0}'.format(l_place))
+                    self.m_logger.info('   picture     : {0}'.format(l_picture))
+                    self.m_logger.info('   full pic.   : {0}'.format(l_full_picture))
+                    self.m_logger.info('   keys        : {0}'.format(l_post.keys()))
 
                 # store post information
                 if self.storeObject(
@@ -527,6 +534,8 @@ class BulkDownloader:
                         p_desc=l_description,
                         p_story=l_story,
                         p_message=l_message,
+                        p_fb_parent_id=l_parent_id,
+                        p_fb_object_id=l_object_id,
                         p_link=l_link,
                         p_picture=l_picture,
                         p_place=l_place,
@@ -538,8 +547,13 @@ class BulkDownloader:
 
                     # get attachments and comments only if the storage of the post was successful, i.e. if
                     # the post was a new one
-                    self.get_post_attachments(l_post_id, l_status_type, l_source, l_link, l_picture, l_properties)
+                    self.get_post_attachments(
+                        l_post_id, l_post_id, l_status_type, l_source,
+                        l_link, l_picture, l_full_picture, l_properties)
                     self.get_comments(l_post_id, l_post_id, p_id, 0)
+
+                    if len(l_parent_id) > 0:
+                        self.get_parent_post(l_post_id, l_parent_id)
                 else:
                     # if already in DB ---> break loop because it means new posts are now exhausted
                     self.m_logger.info(
@@ -569,18 +583,97 @@ class BulkDownloader:
 
         self.m_logger.info('End getPostsFromPage()')
 
-    def get_post_attachments(self, p_id, p_status_type, p_source, p_link, p_picture, p_properties):
+    def get_parent_post(self, p_post_id, p_fb_parent_id):
+        """
+
+        :param p_fb_parent_id:
+        :return:
+        """
+        self.m_logger.info('   get_parent_post() start. p_fb_parent_id: {0}'.format(p_fb_parent_id))
+
+        l_field_list = 'id,application,caption,created_time,description,from,icon,link,message,message_tags,name,' + \
+                       'object_id,parent_id,permalink_url,picture,full_picture,place,properties,shares,' + \
+                       'source,status_type,story,to,type,updated_time,with_tags'
+
+        # API request: get all posts from the page :any:`p_id` in batches of size :any:`gcm_limit`
+        l_request = 'https://graph.facebook.com/{0}/{1}/?limit={2}&access_token={3}&fields={4}'.format(
+            EcAppParam.gcm_api_version,
+            p_fb_parent_id,
+            EcAppParam.gcm_limit,
+            self.m_long_token,
+            l_field_list)
+
+        # perform the request
+        l_response = self.performRequest(l_request)
+        # decode the JSON request response
+        l_response_data = json.loads(l_response)
+
+        # basic post data items
+        l_post_id = l_response_data['id']
+        l_post_date = l_response_data['created_time']
+        l_type = l_response_data['type']
+
+        # get additional data from the post
+        l_name, l_name_short = BulkDownloader.getOptionalField(l_response_data, 'name')
+        l_caption, l_caption_short = BulkDownloader.getOptionalField(l_response_data, 'caption')
+        l_description, l_description_sh = BulkDownloader.getOptionalField(l_response_data, 'description')
+        l_story, l_story_short = BulkDownloader.getOptionalField(l_response_data, 'story')
+        l_message, l_message_short = BulkDownloader.getOptionalField(l_response_data, 'message')
+
+        l_object_id, x = BulkDownloader.getOptionalField(l_response_data, 'object_id')
+        l_parent_id, x = BulkDownloader.getOptionalField(l_response_data, 'parent_id')
+        l_link, x = BulkDownloader.getOptionalField(l_response_data, 'link')
+        l_picture, x = BulkDownloader.getOptionalField(l_response_data, 'picture')
+        l_full_picture, x = BulkDownloader.getOptionalField(l_response_data, 'full_picture')
+        l_source, x = BulkDownloader.getOptionalField(l_response_data, 'source')
+
+        l_status_type, x = BulkDownloader.getOptionalField(l_response_data, 'status_type')
+
+        l_properties = ''
+        if 'properties' in l_response_data.keys():
+            l_properties = json.dumps(l_response_data['properties'])
+
+        self.m_logger.info(
+            '   +++++++++++++++++++++++++POST PARENT [{0}]++++++++++++++++++++++++++++++++'.format(p_fb_parent_id))
+        self.m_logger.info('   id          : ' + l_post_id)
+        self.m_logger.info('   date        : ' + l_post_date)
+        self.m_logger.info('   type        : ' + l_type)
+        self.m_logger.info('   status type : ' + l_status_type)
+        self.m_logger.info('   name        : ' + l_name_short)
+        if EcAppParam.gcm_verboseModeOn:
+            self.m_logger.info('   caption     : ' + l_caption_short)
+            self.m_logger.info('   description : ' + l_description_sh)
+            self.m_logger.info('   story       : ' + l_story_short)
+            self.m_logger.info('   message     : ' + l_message_short)
+            self.m_logger.info('   object_id   : ' + l_object_id)
+            self.m_logger.info('   parent_id   : ' + l_parent_id)
+            self.m_logger.info('   type        : ' + l_type)
+            self.m_logger.info('   keys        : {0}'.format(l_response_data.keys()))
+
+        self.get_post_attachments(
+            p_fb_parent_id, p_post_id, l_status_type, l_source, l_link, l_picture, l_full_picture, l_properties)
+
+        self.m_logger.info('   get_parent_post() end. p_fb_parent_id: {0}'.format(p_fb_parent_id))
+
+    def get_post_attachments(
+            self, p_post_id, p_owner_id, p_status_type, p_source, p_link, p_picture, p_full_picture, p_properties):
         """
         Gets all attachments from a post. Gets a number of parameters from the caller (:any:`get_posts_from_page`)
         which contain data related to media to be stored along attachments. This function calls
         :any:`scan_attachments` which does most of the work. The reason for this is that :any:`scan_attachments` may
         need to call itself recursively if there are sub-attachments.
 
-        :param p_id: API App-specific ID of the post.
+        Two different ID parameters (`p_post_id` and `p_owner_id`) are provided to allow for the case in which
+        attachments are obtained from the parent post, and thus need to be linked in `TB_MEDIA` to a different post
+        from which they were obtained (see :any:`get_parent_post`).
+
+        :param p_post_id: API App-specific ID of the post from which the attachments are to be obtained.
+        :param p_owner_id: API App-specific ID of the post to which the attachments are to be linked.
         :param p_status_type: parent post related data
         :param p_source: parent post related data
         :param p_link: parent post related data
         :param p_picture: parent post related data
+        :param p_full_picture: parent post related data
         :param p_properties: parent post related data
         :return: Nothing
         """
@@ -591,7 +684,7 @@ class BulkDownloader:
         # API request: get list of attachments linked to this post
         l_request = 'https://graph.facebook.com/{0}/{1}/attachments?limit={2}&access_token={3}&fields={4}'.format(
             EcAppParam.gcm_api_version,
-            p_id,
+            p_post_id,
             EcAppParam.gcm_limit,
             self.m_long_token,
             l_field_list)
@@ -601,24 +694,25 @@ class BulkDownloader:
         # decode the JSON response
         l_response_data = json.loads(l_response)
 
-        # call the recursive function that will actually do the work
+        # call the recursive function that will do the data extraction and storage work
         self.scan_attachments(
             l_response_data['data'],
-            p_id,
+            p_owner_id,
             p_status_type,
             p_source,
             p_link,
             p_picture,
+            p_full_picture,
             p_properties,
-            1)
+            1, 1)
 
         self.m_logger.info('End get_post_attachments()')
 
     def scan_attachments(self,
                          p_attachment_list,
                          p_post_id,
-                         p_status_type, p_source, p_link, p_picture, p_properties,
-                         p_depth):
+                         p_status_type, p_source, p_link, p_picture, p_full_picture, p_properties,
+                         p_depth_display, p_depth):
         """
         Scans a JSON response fragment in order to get attachments and (through recursion) sub-attachments, if any.
 
@@ -628,13 +722,14 @@ class BulkDownloader:
         :param p_source: Post-related data to be stored alongside the attachment data
         :param p_link: Post-related data to be stored alongside the attachment data
         :param p_picture: Post-related data to be stored alongside the attachment data
+        :param p_full_picture: Post-related data to be stored alongside the attachment data
         :param p_properties: Post-related data to be stored alongside the attachment data
         :param p_depth: Sub-attachment depth. 1 if directly under post
         :return: Nothing
         """
         self.m_logger.debug('Start scan_attachments()')
         # spaces padding string for debug purposes
-        l_depth_padding = ' ' * (p_depth * 3)
+        l_depth_padding = ' ' * (p_depth_display * 3)
 
         l_attachment_count = 0
         # loop through the attachments in the fragment passed from the caller
@@ -693,16 +788,21 @@ class BulkDownloader:
             self.m_logger.info('{0}Media/height: {1}'.format(l_depth_padding, l_height))
             self.m_logger.info('{0}source      : {1}'.format(l_depth_padding, p_source))
             self.m_logger.info('{0}picture     : {1}'.format(l_depth_padding, p_picture))
+            self.m_logger.info('{0}picture     : {1}'.format(l_depth_padding, p_full_picture))
             self.m_logger.info('{0}properties  : {1}'.format(l_depth_padding, p_properties))
+            self.m_logger.info('{0}keys        : {1}'.format(l_depth_padding, l_attachment.keys()))
 
             # store attachment data in TB_MEDIA
             self.store_media(p_post_id, l_type, l_description, l_title, l_description_tags,
-                             l_target, l_media, l_src, l_width, l_height)
+                             l_target, l_media, l_src, l_width, l_height, p_picture, p_full_picture)
 
             # recursive call for sub-attachment, if any
             if 'subattachments' in l_attachment.keys():
+                self.m_logger.info('$$$$$$$$ SUBATTACHEMENTS : {0}'.format(l_attachment['subattachments']['data']))
                 self.scan_attachments(l_attachment['subattachments']['data'],
-                                      p_post_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth + 1)
+                                      p_post_id, p_status_type, p_source, p_link,
+                                      p_picture, p_full_picture, p_properties,
+                                      p_depth_display + 1, p_depth + 1)
 
             l_attachment_count += 1
         # end of loop: for l_attachment in p_attachment_list:
@@ -811,7 +911,7 @@ class BulkDownloader:
                     # scan possible attachments if storage successful (i.e. it is a new comment)
                     if 'attachment' in l_comment.keys():
                         self.scan_attachments(
-                            [l_comment['attachment']], l_comment_id, '', '', '', '', '', p_depth + 2)
+                            [l_comment['attachment']], l_comment_id, '', '', '', '', '', '', p_depth + 2, 1)
 
                 # get sub-comments if any (recursive call)
                 if l_comment_c_count > 0:
@@ -1142,6 +1242,123 @@ class BulkDownloader:
 
         self.m_logger.info('End repeat_fetch_images()')
 
+    def get_image(self, p_src, p_internal):
+        """
+
+        :param p_src:
+        :param p_internal:
+        :return:
+        """
+        l_fmt_list = ['png', 'jpg', 'jpeg', 'gif', 'svg']
+        l_fmt_string = '|'.join(l_fmt_list) + '|' + \
+                       '|'.join([f.upper() for f in l_fmt_list])
+
+        # try to isolate the image name and format from the source string
+        # l_match = re.search(r'/([^/]+_[no]\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))', l_src)
+        l_match = re.search(r'/([^/]+_[no]\.({0}))'.format(l_fmt_string), p_src)
+        if l_match:
+            l_img = l_match.group(1)
+            l_fmt = l_match.group(2)
+        else:
+            # l_match = re.search(r'url=([^&]+\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))[&%]', l_src)
+            l_match = re.search(r'url=([^&]+\.({0}))[&%]'.format(l_fmt_string), p_src)
+            if l_match:
+                l_img = (urllib.parse.unquote(l_match.group(1))).split('/')[-1]
+                l_fmt = l_match.group(2)
+            else:
+                self.m_logger.warning('Image not found in:' + p_src)
+                l_img = '__ConspiSuck_IMG__{0}'.format(p_internal)
+                l_fmt = ''
+
+        # final adjustments to the format data
+        l_fmt = l_fmt.lower()
+        l_fmt = 'jpeg' if l_fmt == 'jpg' else l_fmt
+
+        if len(l_img) > 200:
+            l_img = l_img[-200:]
+
+        # make 10 attempts (max) at downloading the image
+        l_attempts = 0
+        l_error = False
+        l_image_txt = ''
+        while True:
+            l_attempts += 1
+            if l_attempts > 10:
+                if self.m_background_task.internet_check():
+                    l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
+                    self.m_logger.warning(l_msg)
+                    l_error = True
+                    # l_image_txt will finally contain a succession of error messages + the one below
+                    # separated by '|'
+                    l_image_txt += l_msg
+                    break
+                    # raise BulkDownloaderException(l_msg)
+                else:
+                    # internet down situations do not count as attempts
+                    self.m_logger.info('Internet Down. Waiting ...')
+                    time.sleep(5 * 60)
+                    l_attempts = 0
+
+            try:
+                # download attempt
+                l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(p_src, timeout=20).read()))
+                if l_img_content.mode != 'RGB':
+                    l_img_content = l_img_content.convert('RGB')
+
+                # determine format from image and compare with previous format guess
+                l_fmt_from_img = l_img_content.format
+                if len(l_fmt) == 0:
+                    l_img += '.' + l_fmt_from_img
+                if l_fmt != l_fmt_from_img:
+                    l_fmt = l_fmt_from_img
+
+                self.m_logger.info('--> [{0}] {1}'.format(l_fmt, l_img))
+
+                # save image locally
+                l_img_content.save(os.path.join('./images_fb', l_img))
+
+                # converts image to a base64 string
+                l_output_buffer = io.BytesIO()
+                l_img_content.save(l_output_buffer, format=l_fmt)
+                l_image_txt = base64.b64encode(l_output_buffer.getvalue()).decode()
+                self.m_logger.info('Base64: [{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
+                break
+            except urllib.error.URLError as e:
+                # if a HTTP error 404 occurs --> certainty of error
+                if re.search(r'HTTPError 404', repr(e)):
+                    self.m_logger.warning('Trapped urllib.error.URLError/HTTPError 404: ' + repr(e))
+                    l_image_txt = repr(e)
+                    l_error = True
+                    break
+                else:
+                    # other type of error --> worth trying again
+                    self.m_logger.info('Trapped urllib.error.URLError: ' + repr(e))
+                    l_image_txt += repr(e) + '|'
+                    continue
+            except socket.timeout as e:
+                # if download timed out --> worth trying again
+                self.m_logger.info('Trapped socket.timeout: ' + repr(e))
+                l_image_txt += repr(e) + '|'
+                continue
+            except TypeError as e:
+                # ???
+                self.m_logger.warning('Trapped TypeError (probably pillow UserWarning: Could not ' +
+                                      'allocate palette entry for transparency): ' + repr(e))
+                l_image_txt = repr(e)
+                l_error = True
+                break
+            except KeyError as e:
+                # ???
+                self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
+                l_image_txt = repr(e)
+                l_error = True
+                break
+            except Exception as e:
+                self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
+                raise
+
+        return l_fmt, l_image_txt, l_error
+
     def fetch_images(self):
         """
         Image fetching. Take a block of 100 records in `TB_MEDIA` and attempts to download the pictures they reference
@@ -1163,7 +1380,7 @@ class BulkDownloader:
         # previously.
         try:
             l_cursor.execute("""
-                select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL" 
+                select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL", "TX_PICTURE", "TX_FULL_PICTURE" 
                 from "TB_MEDIA"
                 where "TX_MEDIA_SRC" is not NULL and not "F_LOADED" and not "F_ERROR"
                 limit 100;
@@ -1171,120 +1388,22 @@ class BulkDownloader:
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
 
-        l_fmt_list = ['png', 'jpg', 'jpeg', 'gif', 'svg']
-        l_fmt_string = '|'.join(l_fmt_list) + '|' + \
-                       '|'.join([f.upper() for f in l_fmt_list])
-
         # load through the batch of records
-        for l_src, l_width, l_height, l_internal in l_cursor:
+        for l_src, l_width, l_height, l_internal, l_picture, l_full_picture in l_cursor:
             # thread abort
             if not self.m_threads_proceed:
                 break
 
-            self.m_logger.info('Src: {0}'.format(l_src))
+            self.m_logger.info('media src : {0}'.format(l_src))
+            self.m_logger.info('picture   : {0}'.format(l_picture))
+            self.m_logger.info('full pic. : {0}'.format(l_full_picture))
 
-            # try to isolate the image name and format from the source string
-            # l_match = re.search(r'/([^/]+_[no]\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))', l_src)
-            l_match = re.search(r'/([^/]+_[no]\.({0}))'.format(l_fmt_string), l_src)
-            if l_match:
-                l_img = l_match.group(1)
-                l_fmt = l_match.group(2)
-            else:
-                # l_match = re.search(r'url=([^&]+\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))[&%]', l_src)
-                l_match = re.search(r'url=([^&]+\.({0}))[&%]'.format(l_fmt_string), l_src)
-                if l_match:
-                    l_img = (urllib.parse.unquote(l_match.group(1))).split('/')[-1]
-                    l_fmt = l_match.group(2)
-                else:
-                    self.m_logger.warning('Image not found in:' + l_src)
-                    l_img = '__RBSFB_IMG__{0}'.format(l_internal)
-                    l_fmt = ''
-
-            # final adjustments to the format data
-            l_fmt = l_fmt.lower()
-            l_fmt = 'jpeg' if l_fmt == 'jpg' else l_fmt
-
-            if len(l_img) > 200:
-                l_img = l_img[-200:]
-
-            # make 10 attempts (max) at downloading the image
-            l_attempts = 0
-            l_error = False
-            l_image_txt = ''
-            while True:
-                l_attempts += 1
-                if l_attempts > 10:
-                    if self.m_background_task.internet_check():
-                        l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
-                        self.m_logger.warning(l_msg)
-                        l_error = True
-                        # l_image_txt will finally contain a succession of error messages + the one below
-                        # separated by '|'
-                        l_image_txt += l_msg
-                        break
-                        # raise BulkDownloaderException(l_msg)
-                    else:
-                        # internet down situations do not count as attempts
-                        self.m_logger.info('Internet Down. Waiting ...')
-                        time.sleep(5 * 60)
-                        l_attempts = 0
-
-                try:
-                    # download attempt
-                    l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(l_src, timeout=20).read()))
-                    if l_img_content.mode != 'RGB':
-                        l_img_content = l_img_content.convert('RGB')
-
-                    # determine format from image if not found in the image name
-                    if len(l_fmt) == 0:
-                        l_fmt = l_img_content.format
-                        l_img += '.' + l_fmt
-
-                    self.m_logger.info('--> [{0}] {1}'.format(l_fmt, l_img))
-
-                    # save image locally
-                    l_img_content.save(os.path.join('./images_fb', l_img))
-
-                    # converts image to a base64 string
-                    l_output_buffer = io.BytesIO()
-                    l_img_content.save(l_output_buffer, format=l_fmt)
-                    l_image_txt = base64.b64encode(l_output_buffer.getvalue()).decode()
-                    self.m_logger.info('Base64: [{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
-                    break
-                except urllib.error.URLError as e:
-                    # if a HTTP error 404 occurs --> certainty of error
-                    if re.search(r'HTTPError 404', repr(e)):
-                        self.m_logger.warning('Trapped urllib.error.URLError/HTTPError 404: ' + repr(e))
-                        l_image_txt = repr(e)
-                        l_error = True
-                        break
-                    else:
-                        # other type of error --> worth trying again
-                        self.m_logger.info('Trapped urllib.error.URLError: ' + repr(e))
-                        l_image_txt += repr(e) + '|'
-                        continue
-                except socket.timeout as e:
-                    # if download timed out --> worth trying again
-                    self.m_logger.info('Trapped socket.timeout: ' + repr(e))
-                    l_image_txt += repr(e) + '|'
-                    continue
-                except TypeError as e:
-                    # ???
-                    self.m_logger.warning('Trapped TypeError (probably pillow UserWarning: Could not ' +
-                                          'allocate palette entry for transparency): ' + repr(e))
-                    l_image_txt = repr(e)
-                    l_error = True
-                    break
-                except KeyError as e:
-                    # ???
-                    self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
-                    l_image_txt = repr(e)
-                    l_error = True
-                    break
-                except Exception as e:
-                    self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
-                    raise
-            # end loop: while True:
+            l_fmt, l_image_txt, l_error = self.get_image(l_src, l_internal)
+            l_image_txt_pic, l_image_txt_fp = '', ''
+            if l_picture is not None and len(l_picture) > 0:
+                l_fmt_pic, l_image_txt_pic, l_error_pic  = self.get_image(l_picture, l_internal)
+            if l_full_picture is not None and len(l_full_picture) > 0:
+                l_fmt_fp, l_image_txt_fp, l_error_fp  = self.get_image(l_full_picture, l_internal)
 
             # get new DB connection and cursor to perform the write operation
             l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
@@ -1294,9 +1413,15 @@ class BulkDownloader:
             try:
                 l_cursor_write.execute("""
                     update "TB_MEDIA"
-                    set "F_LOADED" = true, "TX_BASE64" = %s, "F_ERROR" = %s
+                    set 
+                        "F_LOADED" = true, 
+                        "TX_BASE64" = %s, 
+                        "F_ERROR" = %s,
+                        "TX_BASE64_PIC" = %s, 
+                        "TX_BASE64_FP" = %s,
+                        "ST_FORMAT" = %s 
                     where "ID_MEDIA_INTERNAL" = %s;
-                """, (l_image_txt, l_error, l_internal))
+                """, (l_image_txt, l_error, l_image_txt_pic, l_image_txt_fp, l_fmt, l_internal))
                 l_conn_write.commit()
             except Exception as e:
                 self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
@@ -1891,6 +2016,8 @@ class BulkDownloader:
                     p_desc='',
                     p_story='',
                     p_message='',
+                    p_fb_parent_id='',
+                    p_fb_object_id='',
                     p_link='',
                     p_picture='',
                     p_place='',
@@ -1921,7 +2048,9 @@ class BulkDownloader:
         :param p_desc: 
         :param p_story: 
         :param p_message: 
-        :param p_link: 
+        :param p_fb_parent_id:
+        :param p_fb_object_id:
+        :param p_link:
         :param p_picture: 
         :param p_place: 
         :param p_source: 
@@ -1984,14 +2113,16 @@ class BulkDownloader:
                     ,"TX_PLACE"
                     ,"TX_TAGS"
                     ,"TX_WITH_TAGS"
-                    ,"TX_PROPERTIES")
+                    ,"TX_PROPERTIES"
+                    ,"ST_FB_PARENT_ID"
+                    ,"ST_FB_OBJECT_ID")
                 VALUES(
                     %s, %s, %s, %s, 
                     %s, %s, %s, %s, 
                     %s, %s, %s, %s, 
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s) 
+                    %s, %s, %s, %s) 
             """, (
                 p_id,
                 p_parentId,
@@ -2014,7 +2145,9 @@ class BulkDownloader:
                 p_place,
                 p_tags,
                 p_with_tags,
-                p_properties
+                p_properties,
+                p_fb_parent_id,
+                p_fb_object_id
                 )
             )
 
@@ -2237,7 +2370,8 @@ class BulkDownloader:
         self.m_logger.debug('End setLikeFlag()')
 
     def store_media(
-            self, p_id, p_fb_type, p_desc, p_title, p_tags, p_target, p_media, p_media_src, p_width, p_height):
+            self, p_id, p_fb_type, p_desc, p_title, p_tags, p_target,
+            p_media, p_media_src, p_width, p_height, p_picture, p_full_picture):
         """
         Db storage of a media element.
         
@@ -2251,6 +2385,8 @@ class BulkDownloader:
         :param p_media_src: 
         :param p_width: 
         :param p_height: 
+        :param p_picture:
+        :param p_full_picture:
         :return: Nothing (the insertion will always succeed except for technical malfunction)
         """
         self.m_logger.debug('Start store_media()')
@@ -2271,12 +2407,16 @@ class BulkDownloader:
                     ,"TX_MEDIA_SRC"
                     ,"N_WIDTH"
                     ,"N_HEIGHT"
+                    ,"TX_PICTURE"
+                    ,"TX_FULL_PICTURE"
                 )
                 VALUES( 
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s)
-            """, (p_id, p_fb_type, p_desc, p_title, p_tags, p_target, p_media, p_media_src, p_width, p_height))
+                    %s, %s, %s, %s)
+            """, (
+                p_id, p_fb_type, p_desc, p_title, p_tags, p_target,
+                p_media, p_media_src, p_width, p_height, p_picture, p_full_picture))
             l_conn.commit()
         except Exception as e:
             self.m_logger.warning('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))

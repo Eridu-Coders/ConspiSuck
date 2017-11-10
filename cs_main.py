@@ -288,7 +288,13 @@ class CsApp(EcAppCore):
                     if p_posts is None or p_comments is None:
                         return 'n/a'
                     else:
-                        return '{0:.1f}'.format(p_comments/p_posts)
+                        return '{0:,.1f}'.format(p_comments/p_posts).replace(',', ' ')
+
+                def fmt_int_none(p_num):
+                    if p_num is None:
+                        return ''
+                    else:
+                        return '{:,d}'.format(p_num).replace(',', ' ')
 
                 l_response += """
                     <tr>
@@ -296,22 +302,22 @@ class CsApp(EcAppCore):
                         <td><a href="/page/{0}/{13}/{14}">{1}</a></td>
                         <td>{2}</td>
                         <td>{3}</td>
-                        <td style="text-align: center;">{4}</td>
-                        <td style="text-align: center;">{5}</td>
-                        <td style="text-align: center;">{6}</td>
-                        <td style="text-align: center;">{7}</td>
-                        <td style="text-align: center;">{8}</td>
-                        <td style="text-align: center;">{9}</td>
-                        <td style="text-align: center;">{10}</td>
-                        <td style="text-align: center;">{11}</td>
-                        <td style="text-align: center;">{12}</td>
+                        <td style="text-align: right;">{4}</td>
+                        <td style="text-align: right;">{5}</td>
+                        <td style="text-align: right;">{6}</td>
+                        <td style="text-align: right;">{7}</td>
+                        <td style="text-align: right;">{8}</td>
+                        <td style="text-align: right;">{9}</td>
+                        <td style="text-align: right;">{10}</td>
+                        <td style="text-align: right;">{11}</td>
+                        <td style="text-align: right;">{12}</td>
                     <tr/>
                 """.format(
                     l_page_id, l_page_name,
                     l_dmin.strftime('%d/%m/%Y %H:%M'), l_dmax.strftime('%d/%m/%Y %H:%M'),
-                    l_count_pt, l_count_ct, display_ratio(l_count_ct, l_count_pt),
-                    l_count_py, l_count_cy, display_ratio(l_count_cy, l_count_py),
-                    l_count_pm, l_count_cm, display_ratio(l_count_cm, l_count_pm),
+                    fmt_int_none(l_count_pt), fmt_int_none(l_count_ct), display_ratio(l_count_ct, l_count_pt),
+                    fmt_int_none(l_count_py), fmt_int_none(l_count_cy), display_ratio(l_count_cy, l_count_py),
+                    fmt_int_none(l_count_pm), fmt_int_none(l_count_cm), display_ratio(l_count_cm, l_count_pm),
                     datetime.datetime.now().strftime('%Y.%m.%d'),
                     (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y.%m.%d')
                 )
@@ -422,7 +428,7 @@ class CsApp(EcAppCore):
                             "M"."MEDIA_COUNT"
                         from 
                             "TB_OBJ" as "O" 
-                            join (
+                            left outer join (
                                 select "ID_POST", count(1) as "COMM_COUNT"
                                 from "TB_OBJ"
                                 where "ST_TYPE" = 'Comm'
@@ -568,14 +574,26 @@ class CsApp(EcAppCore):
                         "O"."N_LIKES",
                         "O"."N_SHARES",
                         "M"."TX_TARGET",
-                        "M"."TX_BASE64"
+                        "M"."TX_MEDIA_SRC",
+                        "M"."TX_PICTURE",
+                        "M"."TX_FULL_PICTURE",
+                        "M"."TX_BASE64",
+                        "M"."TX_BASE64_PIC",
+                        "M"."TX_BASE64_FP",
+                        "M"."ST_FORMAT"
                     from 
                         "TB_OBJ" as "O"
                         left outer join (
                             select 
                                 "ID_OWNER",
                                 "TX_TARGET",
-                                "TX_BASE64"
+                                "TX_BASE64",
+                                "TX_MEDIA_SRC",
+                                "TX_PICTURE",
+                                "TX_FULL_PICTURE",
+                                "TX_BASE64_PIC",
+                                "TX_BASE64_FP",
+                                "ST_FORMAT"
                             from "TB_MEDIA"
                         ) as "M" on "O"."ID" = "M"."ID_OWNER"
                     where "ID" = %s;
@@ -594,7 +612,13 @@ class CsApp(EcAppCore):
                 l_likes, \
                 l_shares,\
                 l_media_target,\
-                l_base_64\
+                l_media_src,\
+                l_picture,\
+                l_full_picture,\
+                l_base_64, \
+                l_base_64_pic, \
+                l_base_64_fp,\
+                l_fmt\
                     in l_cursor:
 
                 # l_img_display = ''
@@ -609,6 +633,14 @@ class CsApp(EcAppCore):
                 # <tr>
                 #    <td colspan="2" style="word-wrap:break-word;">{15}</td>
                 # <tr/>
+
+                l_img_string = \
+                    ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64, l_fmt)
+                        if l_base_64 is not None else '') + \
+                    ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64_pic, l_fmt)
+                        if l_base_64_pic is not None else '') + \
+                    ('<img src="data:image/{1};base64,{0}" >'.format(l_base_64_fp, l_fmt)
+                        if l_base_64_fp is not None else '')
 
                 l_response += """
                     <tr>
@@ -658,7 +690,22 @@ class CsApp(EcAppCore):
                         <td>{11}</td>
                     <tr/>
                     <tr>
-                        <td colspan="2">{12}</td>
+                        <td style="font-family: sans-serif; 
+                            font-weight: bold; vertical-align: top;">Media&nbsp;Src:</td>
+                        <td>{12}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; 
+                            font-weight: bold; vertical-align: top;">Picture:</td>
+                        <td>{13}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; 
+                            font-weight: bold; vertical-align: top;">Full&nbsp;Picture:</td>
+                        <td>{14}</td>
+                    <tr/>
+                    <tr>
+                        <td colspan="2">{15}</td>
                     <tr/>
                 """.format(
                     l_post_id,
@@ -673,7 +720,10 @@ class CsApp(EcAppCore):
                     l_likes,
                     l_shares,
                     l_media_target,
-                    '<img src="data:image/jpeg;base64,{0}" >'.format(l_base_64) if l_base_64 is not None else ''
+                    l_media_src,
+                    l_picture,
+                    l_full_picture,
+                    l_img_string
                 )
         except Exception as e:
             self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
