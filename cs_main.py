@@ -11,6 +11,8 @@ import sys
 
 __author__ = 'Pavan Mahalingam'
 
+# TODO: Warning message when approaching token end of life
+# TODO: Move database to other disk
 
 class CsBackgroundTask(threading.Thread):
     """

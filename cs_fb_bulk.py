@@ -599,8 +599,10 @@ class BulkDownloader:
 
     def get_parent_post(self, p_post_id, p_fb_parent_id):
         """
+        Gets data from the parent post of a post. Only the attachments are currently recorded.
 
-        :param p_fb_parent_id:
+        :param p_post_id: ID of the post to which the attachments are to be linked.
+        :param p_fb_parent_id: ID of the post from which the attachments are to be downloaded.
         :return:
         """
         self.m_logger.info('   get_parent_post() start. p_fb_parent_id: {0}'.format(p_fb_parent_id))
@@ -664,6 +666,7 @@ class BulkDownloader:
             self.m_logger.info('   type        : ' + l_type)
             self.m_logger.info('   keys        : {0}'.format(l_response_data.keys()))
 
+        # get the attachments (whole purpose of the function)
         self.get_post_attachments(
             p_fb_parent_id, p_post_id, l_status_type, l_source, l_link, l_picture, l_full_picture, l_properties)
 
@@ -677,9 +680,9 @@ class BulkDownloader:
         :any:`scan_attachments` which does most of the work. The reason for this is that :any:`scan_attachments` may
         need to call itself recursively if there are sub-attachments.
 
-        Two different ID parameters (`p_post_id` and `p_owner_id`) are provided to allow for the case in which
-        attachments are obtained from the parent post, and thus need to be linked in `TB_MEDIA` to a different post
-        from which they were obtained (see :any:`get_parent_post`).
+        Two different ID parameters (:any:`p_post_id` and :any:`p_owner_id`) are provided to allow for the case
+        in which attachments are obtained from the parent post, and thus need to be linked in `TB_MEDIA` to
+        a different post from which they were obtained (see :any:`get_parent_post`).
 
         :param p_post_id: API App-specific ID of the post from which the attachments are to be obtained.
         :param p_owner_id: API App-specific ID of the post to which the attachments are to be linked.
@@ -718,7 +721,8 @@ class BulkDownloader:
             p_picture,
             p_full_picture,
             p_properties,
-            1, 1, p_post_id!=p_owner_id)
+            1, 1,
+            p_post_id != p_owner_id)  # the value of p_from_parent is true if the two post IDs are different
 
         self.m_logger.info('End get_post_attachments()')
 
@@ -738,7 +742,10 @@ class BulkDownloader:
         :param p_picture: Post-related data to be stored alongside the attachment data
         :param p_full_picture: Post-related data to be stored alongside the attachment data
         :param p_properties: Post-related data to be stored alongside the attachment data
-        :param p_depth: Sub-attachment depth. 1 if directly under post
+        :param p_depth_display: indentation depth for debug purposes. May be different from :any:`p_depth` if
+            comment attachment
+        :param p_depth: Sub-attachment depth. 1 if directly under post/comment
+        :param p_from_parent: If true --> the attachment is taken from the parent but linked to the son.
         :return: Nothing
         """
         self.m_logger.debug('Start scan_attachments()')
@@ -1412,15 +1419,16 @@ class BulkDownloader:
             self.m_logger.info('picture   : {0}'.format(l_picture))
             self.m_logger.info('full pic. : {0}'.format(l_full_picture))
 
+            l_error, l_error_pic, l_error_fp = True, True, True
             l_fmt, l_image_txt = '', ''
             l_fmt_pic, l_image_txt_pic = '', ''
             l_fmt_fp, l_image_txt_fp = '', ''
             if l_src is not None and len(l_src) > 0:
                 l_fmt, l_image_txt, l_error = self.get_image(l_src, l_internal)
             if l_picture is not None and len(l_picture) > 0:
-                l_fmt_pic, l_image_txt_pic, l_error_pic  = self.get_image(l_picture, l_internal)
+                l_fmt_pic, l_image_txt_pic, l_error_pic = self.get_image(l_picture, l_internal)
             if l_full_picture is not None and len(l_full_picture) > 0:
-                l_fmt_fp, l_image_txt_fp, l_error_fp  = self.get_image(l_full_picture, l_internal)
+                l_fmt_fp, l_image_txt_fp, l_error_fp = self.get_image(l_full_picture, l_internal)
 
             # get new DB connection and cursor to perform the write operation
             l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
@@ -1440,7 +1448,9 @@ class BulkDownloader:
                         "ST_FORMAT_PIC" = %s, 
                         "ST_FORMAT_FP" = %s 
                     where "ID_MEDIA_INTERNAL" = %s;
-                """, (l_image_txt, l_error, l_image_txt_pic, l_image_txt_fp, l_fmt, l_fmt_pic, l_fmt_fp, l_internal))
+                """, (l_image_txt,
+                      l_error or l_error_pic or l_error_fp,
+                      l_image_txt_pic, l_image_txt_fp, l_fmt, l_fmt_pic, l_fmt_fp, l_internal))
                 l_conn_write.commit()
             except Exception as e:
                 self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
@@ -1473,26 +1483,47 @@ class BulkDownloader:
 
     def ocr_images(self):
         """
-        Takes a block of (normally 500) `TB_MEDIA` records with downloaded images and attempts OCR. Stores the results
-        in appropriate fields in `TB_MEDIA`
-        
-        :return: 
+        Takes a block of (normally 100) `TB_MEDIA` records with downloaded images and attempts OCR. Stores the results
+        in appropriate fields in `TB_MEDIA`.
+
+        The OCR process generates several versions of the image through various filters (contrast, brightness,
+        cutoff, etc.). The final OCR text is taken from the 'best' version as determined by various heuristics.
+
+        The `joh` Tesserocr training data is taken from here: `https://github.com/johnlinp/meme-ocr`_.
+
+        .. https://github.com/johnlinp/meme-ocr: http://example.com/
+
+        :return: Nothing
         """
         self.m_logger.info('Start ocr_images()')
 
-        # SQL Offset
+        # SQL Offset (why ?)
         l_offset = 0
-        l_max_img_count = 500
+        # image batch max size
+        l_max_img_count = 100
+
+        # threshold for cutoff filters
         l_threshold = 180
-        l_order_range = 1
+        # If = 2, brightness and contrast processing will be permuted, if = 1, they will not
+        l_order_range = 2
+        # list of possible values for brightness and contrast enhancement
         v = [.75, 1.5]
         # v = [.75, 1.25, 1.5, 2.0]
+        # all images will be enlarged by this factor
         l_enlarge_factor = 2
+
+        # parameters used to determine the bracket in the list of results to be selected at the end
+        # width of the bracket
         l_width = 6
+        # number of elements at the end to discard
         l_clip = 2
+
+        # the temp directory for the ocr operations
         l_img_path = './images_ocr'
+        # controls the display of extra debug messages
         l_debug_messages = False
 
+        # get 100 images (if available)
         l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
         try:
@@ -1506,8 +1537,11 @@ class BulkDownloader:
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
 
+        # image index within the batch
         l_img_count = 0
+        # score by suffix: number of times each suffix was in the selection bracket
         l_suf_score = dict()
+        # loop through the 100 images
         for l_internal, l_base64 in l_cursor:
             # thread abort
             if not self.m_threads_proceed:
@@ -1518,32 +1552,39 @@ class BulkDownloader:
             else:
                 os.system('rm -f {0}/*'.format(l_img_path))
 
-            l_fileList = []
+            l_file_list = []
 
+            # internal function handling th task required when creating a new image version
             def add_image(p_image, p_suffix):
                 l_file = os.path.join(l_img_path, 'img{0:03}_{1}.png'.format(l_img_count, p_suffix))
                 p_image.save(l_file)
-                l_fileList.append(l_file)
+                l_file_list.append(l_file)
                 return p_image
 
-            #self.m_logger.info('Src: {0}'.format(l_src))
+            # the raw image as it is in the DB
             l_raw = Image.open(io.BytesIO(base64.b64decode(l_base64)))
             if l_raw.mode != 'RGB':
                 l_raw = l_raw.convert('RGB')
 
+            # base image: no other modification except enlargement
             l_base = add_image(
                 l_raw.resize((int(l_raw.width*l_enlarge_factor), int(l_raw.height*l_enlarge_factor))), 'base')
+            # black and white version
             l_bw = add_image(ImageEnhance.Color(l_base).enhance(0.0), 'bw')
 
+            # creation of various image versions by applying brightness/contrast changes and cutoff filters
+            # suffixes are added here to the file names
             for l_order in range(l_order_range):
                 for c1 in range(len(v)):
                     for c2 in range(len(v)):
                         p1 = v[c1]
                         p2 = v[c2]
 
+                        # do not do cases in which both brightness and contrast would be reduced
                         if p1 < 1.0 and p2 < 1.0:
                             continue
 
+                        # brightness and contrast variants
                         if l_order == 1:
                             l_img_s1 = add_image(ImageEnhance.Contrast(l_bw).enhance(p1),
                                                  'a{0}{1}{2}'.format(l_order, c1, c2))
@@ -1555,12 +1596,14 @@ class BulkDownloader:
                             l_img_s2 = add_image(ImageEnhance.Contrast(l_img_s1).enhance(p2),
                                                  'b{0}{1}{2}'.format(l_order, c1, c2))
 
+                        # Median filter
                         l_img_s3 = add_image(l_img_s2.filter(ImageFilter.MedianFilter()),
                                              'd{0}{1}{2}'.format(l_order, c1, c2))
 
-                        add_image(l_img_s2.convert('L').point(lambda x: 0 if x<l_threshold else 255, '1'),
+                        # cutoff filters
+                        add_image(l_img_s2.convert('L').point(lambda x: 0 if x < l_threshold else 255, '1'),
                                   'thr{0}{1}{2}'.format(l_order, c1, c2))
-                        add_image(l_img_s2.convert('L').point(lambda x: 255 if x<l_threshold else 0, '1'),
+                        add_image(l_img_s2.convert('L').point(lambda x: 255 if x < l_threshold else 0, '1'),
                                   'inv{0}{1}{2}'.format(l_order, c1, c2))
 
                         add_image(l_img_s3.convert('L').point(lambda x: 0 if x < l_threshold else 255, '1'),
@@ -1569,44 +1612,69 @@ class BulkDownloader:
                                   'dinv{0}{1}{2}'.format(l_order, c1, c2))
             # end for l_order in range(l_order_range):
 
-            def get_resultList(p_fileList, p_api, p_lang):
+            # internal function generating a list of results based on the different image variants
+            def get_result_list(p_file_list, p_api, p_lang):
                 if l_debug_messages:
                     print('get_resultList() p_lang: ' + p_lang)
+
+                # list of tuples that will be returned to the caller
                 l_result_list = []
+                # best average Tesserocr quality ratio
                 l_max_avg = 0
+                # best percentage of words found in dictionary
                 l_max_dict_ratio = 0
-                for l_file in p_fileList:
+
+                # loop through all file versions
+                for l_file in p_file_list:
                     if l_debug_messages:
                         print(l_file)
+
+                    # issue the file to the Tesserocr instance
                     p_api.SetImageFile(l_file)
 
+                    # get the full OCR text
                     l_txt = re.sub(r'\s+', r' ', p_api.GetUTF8Text()).strip()
+                    # if text longer than 10 characters --> analyze word by word
                     if len(l_txt) > 10:
+                        # get the result iterator from the Tesserocr API instance
                         ri = p_api.GetIterator()
-                        l_more_3 = []
+
+                        # list of all words
                         l_raw_list = []
+                        # list of words minus empties and non fully alphabetic or numeric
                         l_list = []
+                        # list of words more than 3 characters long (only the 'found in dictionary' flag)
+                        l_more_3 = []
                         while True:
                             try:
-                                l_word = re.sub('\s+', ' ', ri.GetUTF8Text(RIL.WORD)).strip()
+                                # the word
+                                l_word_ocr = re.sub('\s+', ' ', ri.GetUTF8Text(RIL.WORD)).strip()
+                                # its confidence value
                                 l_conf = ri.Confidence(RIL.WORD)
+                                # whether it was found in the dictionary
                                 l_dict = ri.WordIsFromDictionary()
 
+                                # ligatures removal
                                 l_list_char = []
-                                for c in list(l_word):
+                                for c in list(l_word_ocr):
                                     try:
                                         l_list_char.append(self.m_lig_dict[c])
                                     except KeyError:
                                         l_list_char.append(c)
-                                l_word = ''.join(l_list_char)
+                                l_word_ocr = ''.join(l_list_char)
 
-                                l_full_alpha = re.match(r'(^[a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*$', l_word)
+                                # whether the word contains only alphabetic characters (and possibly a
+                                # punctuation mark at the end))
+                                l_full_alpha = re.match(
+                                    r'(^[a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[.,;:?!]*$', l_word_ocr)
                                 # l_full_alpha = False
                                 # l_match = re.search(r'([a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*', l_word)
                                 # if l_match:
                                 #     l_full_alpha = (l_match.group(0) == l_word)
 
-                                l_full_num = re.match(r'(^[0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*$', l_word)
+                                # whether the word contains only numeric characters (and possibly a
+                                # punctuation mark at the end))
+                                l_full_num = re.match(r'(^[0-9]+[:,.][0-9]+|[0-9]+)[.,;:?!]*$', l_word_ocr)
                                 # l_full_num = False
                                 # l_match = re.search(r'([0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*', l_word)
                                 # if l_match:
@@ -1618,28 +1686,40 @@ class BulkDownloader:
                                         'D' if l_dict else ' ',
                                         'A' if l_full_alpha else ' ',
                                         'N' if l_full_num else ' ',
-                                        l_word,
+                                        l_word_ocr,
                                         p_lang))
 
-                                l_raw_list.append((l_word, int(l_conf), l_dict))
-                                if (l_full_num or l_full_alpha) and len(l_word) > 0:
-                                    l_list.append((l_word, int(l_conf), l_dict))
-                                    if len(l_word) > 2:
+                                # add a triplet to the raw list
+                                l_raw_list.append((l_word_ocr, int(l_conf), l_dict))
+
+                                # add a triplet to the filtered list if conditions apply
+                                if (l_full_num or l_full_alpha) and len(l_word_ocr) > 0:
+                                    l_list.append((l_word_ocr, int(l_conf), l_dict))
+
+                                    # words over 3 characters long
+                                    if len(l_word_ocr) > 2:
                                         l_more_3.append(l_dict)
 
-                            except Exception as e:
+                            # break loop on any exception
+                            except Exception as e1:
                                 if l_debug_messages:
-                                    print(repr(e))
-                                break
-                            if not ri.Next(RIL.WORD):
+                                    print(repr(e1))
                                 break
 
+                            # move the iterator one notch forward
+                            if not ri.Next(RIL.WORD):
+                                break
+                        # end of loop: while True:
+
+                        # if less than 3 proper words, don't bother
                         if len(l_list) <= 3:
                             continue
 
+                        # calculate the average confidence value
                         l_conf_list = [l[1] for l in l_list]
                         l_avg = sum(l_conf_list) / float(len(l_conf_list))
 
+                        # calculate the percentage of words (more than 3 characters long) found in Tesserocr dictionary
                         if len(l_more_3) > 0:
                             l_dict_ratio = sum([1 if l else 0 for l in l_more_3])/float(len(l_more_3))
                         else:
@@ -1651,14 +1731,21 @@ class BulkDownloader:
                         if l_avg < 75.0:
                             continue
 
+                        # the final text, rebuilt from the list of proper words
                         l_txt = ' '.join([l[0] for l in l_list])
+
+                        # add everything as a tuple in the results list
                         l_result_list.append((l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list))
 
+                        # updates best values
                         if l_avg > l_max_avg:
                             l_max_avg = l_avg
                         if l_dict_ratio > l_max_dict_ratio:
                             l_max_dict_ratio = l_dict_ratio
+                    # end of: if len(l_txt) > 10:
+                # end of loop: for l_file in p_file_list
 
+                # calculate the average ratio of dictionary hits
                 if len(l_result_list) > 0:
                     l_avg_dict_ratio = sum([l[1] for l in l_result_list])/float(len(l_result_list))
                 else:
@@ -1667,73 +1754,82 @@ class BulkDownloader:
                     print(
                         ('[{3}] {0} results, max avg: {1:.2f}, max dict. ' +
                          'ratio {2:.2f}, avg. dict. ratio {4:.2f}').format(
-                        len(l_result_list), l_max_avg, l_max_dict_ratio, p_lang, l_avg_dict_ratio))
+                            len(l_result_list), l_max_avg, l_max_dict_ratio, p_lang, l_avg_dict_ratio))
+
+                # return the results
                 return l_result_list, l_max_avg, l_max_dict_ratio, l_avg_dict_ratio
             # end def get_resultList(p_fileList, p_api, p_lang):
 
+            # for debug purposes only
             def display_results(p_result_list, p_lang):
-                if l_debug_messages:
-                    print('-----[{0} / {1}]----------------------------------------------'.format(l_img_count, p_lang))
+                print('-----[{0} / {1}]----------------------------------------------'.format(l_img_count, p_lang))
+                # sort by increasing average confidence value
                 p_result_list.sort(key=lambda l_tuple: l_tuple[0])
                 for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
                     l_file = re.sub(r'{0}/img\d+_'.format(l_img_path), '', l_file)
                     l_file = re.sub(r'\.png', '', l_file)
-                    if l_debug_messages:
-                        print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                    print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
                 for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
                     l_file = re.sub(r'{0}/img\d+_'.format(l_img_path), '', l_file)
                     l_file = re.sub(r'\.png', '', l_file)
-                    if l_debug_messages:
-                        print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
-                        print('     {0}'.format(l_list))
-                        print('     {0}'.format(l_raw_list))
+                    print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                    print('     {0}'.format(l_list))
+                    print('     {0}'.format(l_raw_list))
 
+            # build two result lists of results with the ordinary English training data and the joh data
             # OCR - eng
             with PyTessBaseAPI(lang='eng') as l_api_eng:
                 l_result_list_eng, l_max_avg_eng, l_max_dict_ratio_eng, l_avg_dict_ratio_eng = \
-                    get_resultList(l_fileList, l_api_eng, 'eng')
-                if len(l_result_list_eng) > 0:
+                    get_result_list(l_file_list, l_api_eng, 'eng')
+                if l_debug_messages and len(l_result_list_eng) > 0:
                     display_results(l_result_list_eng, 'eng')
 
             # OCR - joh
             with PyTessBaseAPI(lang='joh') as l_api_joh:
                 l_result_list_joh, l_max_avg_joh, l_max_dict_ratio_joh, l_avg_dict_ratio_joh = \
-                    get_resultList(l_fileList, l_api_joh, 'joh')
-                if len(l_result_list_joh) > 0:
+                    get_result_list(l_file_list, l_api_joh, 'joh')
+                if l_debug_messages and len(l_result_list_joh) > 0:
                     display_results(l_result_list_joh, 'joh')
 
+            # internal function for selecting the final version
             def select_final_version(p_result_list):
                 l_txt = ''
-                l_vocabulary = []
+                l_vocabulary_select = []
 
-                l_min_select = len(p_result_list) -1 -l_clip -l_width
-                l_max_select = len(p_result_list) -1 -l_clip
+                # boundaries of the bracket of values to be selected
+                l_min_select = len(p_result_list) - 1 - l_clip - l_width
+                l_max_select = len(p_result_list) - 1 - l_clip
 
+                # safety bumpers
                 if l_min_select < 0:
                     l_min_select = 0
                 if l_max_select < 0:
-                    l_max_select = len(p_result_list) -1
+                    l_max_select = len(p_result_list) - 1
 
                 # calculate max length of result list (within selection bracket)
+                # and also update the score by suffix and build the vocabulary list
                 l_max_len = 0
                 for i in range(l_min_select, l_max_select+1):
                     l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list = p_result_list[i]
                     if len(l_list) > l_max_len:
                         l_max_len = len(l_list)
 
+                    # suffix extraction from the image filename
                     l_file = re.sub(r'images_ocr/img\d+_', '', l_file)
-                    l_suf = re.sub(r'\.png', '', l_file)
+                    l_suffix = re.sub(r'\.png', '', l_file)
 
+                    # suffix score accounting
                     if len(p_result_list) > l_clip + l_width:
-                        if l_suf in l_suf_score.keys():
-                            l_suf_score[l_suf] += 1
+                        if l_suffix in l_suf_score.keys():
+                            l_suf_score[l_suffix] += 1
                         else:
-                            l_suf_score[l_suf] = 1
+                            l_suf_score[l_suffix] = 1
 
-                    for l_word, _, _ in l_list:
-                        l_word = re.sub('[\.,;:\?!]*$', '', l_word)
-                        if l_word not in l_vocabulary:
-                            l_vocabulary.append(l_word)
+                    # building the vocabulary list
+                    for l_word_v, _, _ in l_list:
+                        l_word_v = re.sub(r'[.,;:?!]*$', '', l_word_v)
+                        if l_word_v not in l_vocabulary_select:
+                            l_vocabulary_select.append(l_word_v)
 
                 # select the longest (within selection bracket)
                 for i in range(l_min_select, l_max_select+1):
@@ -1742,23 +1838,28 @@ class BulkDownloader:
                         break
 
                 # print('l_vocabulary:', l_vocabulary, file=sys.stderr)
-                return l_txt, l_vocabulary
+                return l_txt, l_vocabulary_select
             # end def select_final_version(p_result_list):
 
+            # final selection
             l_text = ''
             if l_debug_messages:
                 print('======[{0}]==================================================='.format(l_img_count))
+
             if l_max_avg_eng < l_max_avg_joh and l_avg_dict_ratio_eng < l_avg_dict_ratio_joh:
+                # case where joh is clearly better than eng
                 l_text, l_vocabulary = select_final_version(l_result_list_joh)
                 if l_debug_messages:
                     print('RESULT (joh):', l_text)
                     print('[{0}] RESULT (joh):'.format(l_img_count), l_text, file=sys.stderr)
             elif l_max_avg_joh < l_max_avg_eng and l_avg_dict_ratio_joh < l_avg_dict_ratio_eng:
+                # case where eng is clearly better than joh
                 l_text, l_vocabulary = select_final_version(l_result_list_eng)
                 if l_debug_messages:
                     print('RESULT (eng):', l_text)
                     print('[{0}] RESULT (eng):'.format(l_img_count), l_text, file=sys.stderr)
             else:
+                # unclear cases
                 l_txt_eng, l_vocabulary_eng = select_final_version(l_result_list_eng)
                 l_txt_joh, l_vocabulary_joh = select_final_version(l_result_list_joh)
 
@@ -1768,6 +1869,7 @@ class BulkDownloader:
                     if l_word not in l_vocabulary:
                         l_vocabulary.append(l_word)
 
+                # take the longest text
                 if len(l_txt_eng) > len(l_txt_joh):
                     if l_debug_messages:
                         print('RESULT (Undecided/eng):', l_txt_eng)
@@ -1779,7 +1881,9 @@ class BulkDownloader:
                         print('[{0}] RESULT (Undecided/joh):'.format(l_img_count), l_txt_joh, file=sys.stderr)
                     l_text = l_txt_joh
 
+            # store in the database
             if len(l_vocabulary) > 0:
+                # there is something to store
                 if l_debug_messages:
                     print('VOCABULARY:', ' '.join(l_vocabulary))
                     print('[{0}] VOCABULARY:'.format(l_img_count), ' '.join(l_vocabulary), file=sys.stderr)
@@ -1805,6 +1909,7 @@ class BulkDownloader:
                 l_cursor_write.close()
                 self.m_pool.putconn(l_conn_write)
             else:
+                # nothing to store, just mark the ocr as done
                 l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images() UPDATE')
                 l_cursor_write = l_conn_write.cursor()
 
