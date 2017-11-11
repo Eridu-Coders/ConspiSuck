@@ -161,14 +161,14 @@ class BulkDownloader:
         self.m_posts_update_thread = Thread(target=self.repeat_posts_update)
         # One-letter name for the posts update thread
         self.m_posts_update_thread.name = 'U'
-        # self.m_posts_update_thread.start()
+        self.m_posts_update_thread.start()
         self.m_logger.info('Posts update thread launched')
 
         # likes details download thread
         self.m_likes_details_thread = Thread(target=self.repeat_get_likes_details)
         # One-letter name for the likes details download thread
         self.m_likes_details_thread.name = 'L'
-        # self.m_likes_details_thread.start()
+        self.m_likes_details_thread.start()
         self.m_logger.info('Likes details thread launched')
 
         # Image fetching thread
@@ -184,7 +184,7 @@ class BulkDownloader:
             self.m_ocr_thread = Thread(target=self.repeat_ocr_image)
             # One-letter name for the OCR thread
             self.m_ocr_thread.name = 'O'
-            #self.m_ocr_thread.start()
+            # self.m_ocr_thread.start()
             self.m_logger.info('Image OCR thread started')
 
     def stop_threads(self):
@@ -234,8 +234,6 @@ class BulkDownloader:
 
         # self.get_pages()
         self.get_posts()
-        # self.update_posts()
-        # self.get_likes_detail()
         time.sleep(60 * 60)
 
         self.m_logger.info('End bulk_download()')
@@ -346,6 +344,22 @@ class BulkDownloader:
             select "ID","DT_CRE","ST_TYPE","ST_FB_TYPE","TX_NAME","ID_INTERNAL"
             from "TB_OBJ"
             where "ST_TYPE" = 'Page';
+
+            delete from "TB_OBJ" where "ID_PAGE" in ('108734602494994', '448319605253405');
+            DELETE FROM "TB_MEDIA"
+            USING "TB_MEDIA" AS "M"
+            LEFT OUTER JOIN "TB_OBJ" AS "O" ON
+               "M"."ID_OWNER" = "O"."ID"
+            WHERE
+               "TB_MEDIA"."ID_MEDIA_INTERNAL" = "M"."ID_MEDIA_INTERNAL" AND
+               "O"."ID" IS NULL;
+            DELETE FROM "TB_USER"
+            USING "TB_USER" AS "U"
+            LEFT OUTER JOIN "TB_OBJ" AS "O" ON
+               "U"."ID" = "O"."ID_USER"
+            WHERE
+               "TB_USER"."ID_INTERNAL" = "U"."ID_INTERNAL" AND
+               "O"."ID_USER" IS NULL;
         
         :return: Nothing
         """
@@ -704,7 +718,7 @@ class BulkDownloader:
             p_picture,
             p_full_picture,
             p_properties,
-            1, 1)
+            1, 1, p_post_id!=p_owner_id)
 
         self.m_logger.info('End get_post_attachments()')
 
@@ -712,7 +726,7 @@ class BulkDownloader:
                          p_attachment_list,
                          p_post_id,
                          p_status_type, p_source, p_link, p_picture, p_full_picture, p_properties,
-                         p_depth_display, p_depth):
+                         p_depth_display, p_depth, p_from_parent=False):
         """
         Scans a JSON response fragment in order to get attachments and (through recursion) sub-attachments, if any.
 
@@ -794,7 +808,7 @@ class BulkDownloader:
 
             # store attachment data in TB_MEDIA
             self.store_media(p_post_id, l_type, l_description, l_title, l_description_tags,
-                             l_target, l_media, l_src, l_width, l_height, p_picture, p_full_picture)
+                             l_target, l_media, l_src, l_width, l_height, p_picture, p_full_picture, p_from_parent)
 
             # recursive call for sub-attachment, if any
             if 'subattachments' in l_attachment.keys():
@@ -802,7 +816,7 @@ class BulkDownloader:
                 self.scan_attachments(l_attachment['subattachments']['data'],
                                       p_post_id, p_status_type, p_source, p_link,
                                       p_picture, p_full_picture, p_properties,
-                                      p_depth_display + 1, p_depth + 1)
+                                      p_depth_display + 1, p_depth + 1, p_from_parent)
 
             l_attachment_count += 1
         # end of loop: for l_attachment in p_attachment_list:
@@ -1398,8 +1412,11 @@ class BulkDownloader:
             self.m_logger.info('picture   : {0}'.format(l_picture))
             self.m_logger.info('full pic. : {0}'.format(l_full_picture))
 
-            l_fmt, l_image_txt, l_error = self.get_image(l_src, l_internal)
-            l_image_txt_pic, l_image_txt_fp = '', ''
+            l_fmt, l_image_txt = '', ''
+            l_fmt_pic, l_image_txt_pic = '', ''
+            l_fmt_fp, l_image_txt_fp = '', ''
+            if l_src is not None and len(l_src) > 0:
+                l_fmt, l_image_txt, l_error = self.get_image(l_src, l_internal)
             if l_picture is not None and len(l_picture) > 0:
                 l_fmt_pic, l_image_txt_pic, l_error_pic  = self.get_image(l_picture, l_internal)
             if l_full_picture is not None and len(l_full_picture) > 0:
@@ -1419,9 +1436,11 @@ class BulkDownloader:
                         "F_ERROR" = %s,
                         "TX_BASE64_PIC" = %s, 
                         "TX_BASE64_FP" = %s,
-                        "ST_FORMAT" = %s 
+                        "ST_FORMAT" = %s, 
+                        "ST_FORMAT_PIC" = %s, 
+                        "ST_FORMAT_FP" = %s 
                     where "ID_MEDIA_INTERNAL" = %s;
-                """, (l_image_txt, l_error, l_image_txt_pic, l_image_txt_fp, l_fmt, l_internal))
+                """, (l_image_txt, l_error, l_image_txt_pic, l_image_txt_fp, l_fmt, l_fmt_pic, l_fmt_fp, l_internal))
                 l_conn_write.commit()
             except Exception as e:
                 self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
@@ -2371,7 +2390,7 @@ class BulkDownloader:
 
     def store_media(
             self, p_id, p_fb_type, p_desc, p_title, p_tags, p_target,
-            p_media, p_media_src, p_width, p_height, p_picture, p_full_picture):
+            p_media, p_media_src, p_width, p_height, p_picture, p_full_picture, p_from_parent):
         """
         Db storage of a media element.
         
@@ -2387,6 +2406,7 @@ class BulkDownloader:
         :param p_height: 
         :param p_picture:
         :param p_full_picture:
+        :param p_from_parent:
         :return: Nothing (the insertion will always succeed except for technical malfunction)
         """
         self.m_logger.debug('Start store_media()')
@@ -2409,14 +2429,16 @@ class BulkDownloader:
                     ,"N_HEIGHT"
                     ,"TX_PICTURE"
                     ,"TX_FULL_PICTURE"
+                    ,"F_FROM_PARENT"
                 )
                 VALUES( 
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s)
+                    %s, %s, %s, %s,
+                    %s)
             """, (
                 p_id, p_fb_type, p_desc, p_title, p_tags, p_target,
-                p_media, p_media_src, p_width, p_height, p_picture, p_full_picture))
+                p_media, p_media_src, p_width, p_height, p_picture, p_full_picture, p_from_parent))
             l_conn.commit()
         except Exception as e:
             self.m_logger.warning('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))

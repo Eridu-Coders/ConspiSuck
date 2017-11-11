@@ -557,6 +557,7 @@ class CsApp(EcAppCore):
         # the story ID is the last member of the URL
         l_post_id = re.sub('/post/', '', p_request_handler.path)
         self.m_logger.info('l_post_id: {0}'.format(l_post_id))
+
         l_conn = self.m_connectionPool.getconn('oneStory()')
         l_cursor = l_conn.cursor()
         try:
@@ -573,32 +574,22 @@ class CsApp(EcAppCore):
                         "O"."TX_MESSAGE",
                         "O"."N_LIKES",
                         "O"."N_SHARES",
-                        "M"."TX_TARGET",
-                        "M"."TX_MEDIA_SRC",
-                        "M"."TX_PICTURE",
-                        "M"."TX_FULL_PICTURE",
-                        "M"."TX_BASE64",
-                        "M"."TX_BASE64_PIC",
-                        "M"."TX_BASE64_FP",
-                        "M"."ST_FORMAT"
+                        "M"."IMG_COUNT",
+                        "U"."ST_NAME"
                     from 
                         "TB_OBJ" as "O"
                         left outer join (
-                            select 
-                                "ID_OWNER",
-                                "TX_TARGET",
-                                "TX_BASE64",
-                                "TX_MEDIA_SRC",
-                                "TX_PICTURE",
-                                "TX_FULL_PICTURE",
-                                "TX_BASE64_PIC",
-                                "TX_BASE64_FP",
-                                "ST_FORMAT"
-                            from "TB_MEDIA"
+                            select "ID_OWNER", count(1) as "IMG_COUNT" 
+                            from "TB_MEDIA" 
+                            where not "F_FROM_PARENT"
+                            group by "ID_OWNER"  
                         ) as "M" on "O"."ID" = "M"."ID_OWNER"
-                    where "ID" = %s;
+                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                    where "O"."ID" = %s;
                 """, (l_post_id,)
             )
+
+            self.m_logger.info('SQL: ' + l_cursor.query.decode('utf-8'))
 
             l_response = ''
             for l_fb_type, \
@@ -611,14 +602,8 @@ class CsApp(EcAppCore):
                 l_message, \
                 l_likes, \
                 l_shares,\
-                l_media_target,\
-                l_media_src,\
-                l_picture,\
-                l_full_picture,\
-                l_base_64, \
-                l_base_64_pic, \
-                l_base_64_fp,\
-                l_fmt\
+                l_img_count,\
+                l_user_name\
                     in l_cursor:
 
                 # l_img_display = ''
@@ -634,13 +619,100 @@ class CsApp(EcAppCore):
                 #    <td colspan="2" style="word-wrap:break-word;">{15}</td>
                 # <tr/>
 
-                l_img_string = \
-                    ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64, l_fmt)
-                        if l_base_64 is not None else '') + \
-                    ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64_pic, l_fmt)
-                        if l_base_64_pic is not None else '') + \
-                    ('<img src="data:image/{1};base64,{0}" >'.format(l_base_64_fp, l_fmt)
-                        if l_base_64_fp is not None else '')
+                # ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64, l_fmt)
+                #    if l_base_64 is not None else '') + \
+                # ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64_pic, l_fmt)
+                #    if l_base_64_pic is not None else '') + \
+
+                l_conn_media = self.m_connectionPool.getconn('oneStory() - Media')
+                l_cursor_media = l_conn.cursor()
+                try:
+                    l_cursor_media.execute(
+                        """
+                            select 
+                                "TX_TARGET"
+                                ,"TX_MEDIA_SRC"
+                                ,"TX_PICTURE"
+                                ,"TX_FULL_PICTURE"
+                                ,"TX_BASE64"
+                                ,"TX_BASE64_PIC"
+                                ,"TX_BASE64_FP"
+                                ,"ST_FORMAT"
+                                ,"ST_FORMAT_PIC"
+                                ,"ST_FORMAT_FP"
+                            from "TB_MEDIA" 
+                            where not "F_FROM_PARENT" and "ID_OWNER" = %s
+                            order by "ID_MEDIA_INTERNAL";
+                        """, (l_post_id,)
+                    )
+                except Exception as e:
+                    self.m_logger.warning('TB_MEDIA query failure: {0}'.format(repr(e)))
+                    raise
+
+                l_img_string = ''
+                for l_media_target,\
+                    l_media_src,\
+                    l_picture,\
+                    l_full_picture,\
+                    l_base_64, \
+                    l_base_64_pic, \
+                    l_base_64_fp,\
+                    l_fmt,\
+                    l_fmt_pic,\
+                    l_fmt_fp\
+                    in l_cursor_media:
+
+                        l_skeleton = """
+                            <tr><td colspan="2">
+                                <img src="data:image/{1};base64,{0}" >
+                            </td></tr>
+                        """
+                        if l_img_count < 2:
+                            if l_base_64_fp is not None:
+                                l_one_img = l_skeleton.format(l_base_64_fp, l_fmt_fp)
+                            elif l_base_64 is not None:
+                                l_one_img = l_skeleton.format(l_base_64, l_fmt)
+                            else:
+                                l_one_img = ''
+                        else:
+                            l_one_img = None
+                            if l_media_src is not None:
+                                l_match = re.search(r'w\=(\d+)\&h\=(\d+)', l_media_src)
+                                if l_match and l_match.group(1) == l_match.group(2) and l_base_64_fp is not None:
+                                    l_one_img = l_skeleton.format(l_base_64_fp, l_fmt_fp)
+
+                            if l_one_img is None:
+                                if l_base_64 is not None:
+                                    l_one_img = l_skeleton.format(l_base_64, l_fmt)
+                                else:
+                                    l_one_img = ''
+
+                        l_img_string += """
+                            <tr>
+                                <td style="font-family: sans-serif; border-top: 2px solid black; 
+                                    font-weight: bold; vertical-align: top;">Media&nbsp;Target:</td>
+                                <td style="border-top: 2px solid black;">{0}</td>
+                            <tr/>
+                            <tr>
+                                <td style="font-family: sans-serif; 
+                                    font-weight: bold; vertical-align: top;">Media&nbsp;Src:</td>
+                                <td>{1}</td>
+                            <tr/>
+                            <tr>
+                                <td style="font-family: sans-serif; 
+                                    font-weight: bold; vertical-align: top;">Picture:</td>
+                                <td>{2}</td>
+                            <tr/>
+                            <tr>
+                                <td style="font-family: sans-serif; 
+                                    font-weight: bold; vertical-align: top;">Full&nbsp;Picture:</td>
+                                <td>{3}</td>
+                            <tr/>
+                            {4}
+                        """.format(l_media_target, l_media_src, l_picture, l_full_picture, l_one_img)
+
+                l_cursor_media.close()
+                self.m_connectionPool.putconn(l_conn_media)
 
                 l_response += """
                     <tr>
@@ -648,12 +720,16 @@ class CsApp(EcAppCore):
                         <td>{0}</td>
                     <tr/>
                     <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">From</td>
+                        <td>{12}</td>
+                    <tr/>
+                    <tr>
                         <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">FB&nbsp;Type</td>
                         <td>{1}</td>
                     <tr/>
                     <tr>
                         <td style="font-family: sans-serif; 
-                            font-weight: bold; vertical-align: top;">FB&nbsp;Statust&nbsp;Type</td>
+                            font-weight: bold; vertical-align: top;">FB&nbsp;Status&nbsp;Type</td>
                         <td>{2}</td>
                     <tr/>
                     <tr>
@@ -684,29 +760,7 @@ class CsApp(EcAppCore):
                         <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Likes/Shares:</td>
                         <td>{9}/{10}</td>
                     <tr/>
-                    <tr>
-                        <td style="font-family: sans-serif; 
-                            font-weight: bold; vertical-align: top;">Media&nbsp;Target:</td>
-                        <td>{11}</td>
-                    <tr/>
-                    <tr>
-                        <td style="font-family: sans-serif; 
-                            font-weight: bold; vertical-align: top;">Media&nbsp;Src:</td>
-                        <td>{12}</td>
-                    <tr/>
-                    <tr>
-                        <td style="font-family: sans-serif; 
-                            font-weight: bold; vertical-align: top;">Picture:</td>
-                        <td>{13}</td>
-                    <tr/>
-                    <tr>
-                        <td style="font-family: sans-serif; 
-                            font-weight: bold; vertical-align: top;">Full&nbsp;Picture:</td>
-                        <td>{14}</td>
-                    <tr/>
-                    <tr>
-                        <td colspan="2">{15}</td>
-                    <tr/>
+                    {11}
                 """.format(
                     l_post_id,
                     l_fb_type,
@@ -719,14 +773,11 @@ class CsApp(EcAppCore):
                     l_message,
                     l_likes,
                     l_shares,
-                    l_media_target,
-                    l_media_src,
-                    l_picture,
-                    l_full_picture,
-                    l_img_string
+                    l_img_string,
+                    l_user_name
                 )
         except Exception as e:
-            self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
+            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
             raise
 
         l_cursor.close()
