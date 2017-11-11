@@ -221,55 +221,60 @@ class CsApp(EcAppCore):
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
-                select 
-                    "P"."ID", "P"."TX_NAME", 
-                    "OPT"."MIN_DT" as "PT_MIN_DT", "OPT"."MAX_DT" as "PT_MAX_DT", "OPT"."COUNT_POST" as "PT_COUNT",
-                    "OCT"."MIN_DT" as "CT_MIN_DT", "OCT"."MAX_DT" as "CT_MAX_DT", "OCT"."COUNT_COMM" as "CT_COUNT",
-                    "OPM"."MIN_DT" as "PM_MIN_DT", "OPM"."MAX_DT" as "PM_MAX_DT", "OPM"."COUNT_POST" as "PM_COUNT",
-                    "OCM"."MIN_DT" as "CM_MIN_DT", "OCM"."MAX_DT" as "CM_MAX_DT", "OCM"."COUNT_COMM" as "CM_COUNT",
-                    "OPY"."MIN_DT" as "PY_MIN_DT", "OPY"."MAX_DT" as "PY_MAX_DT", "OPY"."COUNT_POST" as "PY_COUNT",
-                    "OCY"."MIN_DT" as "CY_MIN_DT", "OCY"."MAX_DT" as "CY_MAX_DT", "OCY"."COUNT_COMM" as "CY_COUNT"
-                from
-                    "TB_PAGES" as "P"
-                    join (
+                select * from (
+                    select 
+                        "P"."ID", "P"."TX_NAME", 
+                        "OPT"."MIN_DT" as "PT_MIN_DT", "OPT"."MAX_DT" as "PT_MAX_DT", "OPT"."COUNT_POST" as "PT_COUNT",
+                        "OCT"."MIN_DT" as "CT_MIN_DT", "OCT"."MAX_DT" as "CT_MAX_DT", "OCT"."COUNT_COMM" as "CT_COUNT",
+                        "OPM"."MIN_DT" as "PM_MIN_DT", "OPM"."MAX_DT" as "PM_MAX_DT", "OPM"."COUNT_POST" as "PM_COUNT",
+                        "OCM"."MIN_DT" as "CM_MIN_DT", "OCM"."MAX_DT" as "CM_MAX_DT", "OCM"."COUNT_COMM" as "CM_COUNT",
+                        "OPY"."MIN_DT" as "PY_MIN_DT", "OPY"."MAX_DT" as "PY_MAX_DT", "OPY"."COUNT_POST" as "PY_COUNT",
+                        "OCY"."MIN_DT" as "CY_MIN_DT", "OCY"."MAX_DT" as "CY_MAX_DT", "OCY"."COUNT_COMM" as "CY_COUNT",
+                        case when "OCY"."COUNT_COMM" is null then 0 else "OCY"."COUNT_COMM" end "CY_COUNT_NN"
+                    from
+                        "TB_PAGES" as "P"
+                        join (
                         select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
                         from "TB_OBJ"
                         where "ST_TYPE" = 'Post'
                         group by "ID_PAGE"
-                    ) as "OPT" on "P"."ID" = "OPT"."ID_PAGE"
-                    left outer join (
+                        ) as "OPT" on "P"."ID" = "OPT"."ID_PAGE"
+                        left outer join (
                         select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
                         from "TB_OBJ"
                         where "ST_TYPE" = 'Comm'
                         group by "ID_PAGE"
-                    ) as "OCT" on "P"."ID" = "OCT"."ID_PAGE"
-                    left outer join (
+                        ) as "OCT" on "P"."ID" = "OCT"."ID_PAGE"
+                        left outer join (
                         select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
                         from "TB_OBJ"
                         where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 30
                         group by "ID_PAGE"
-                    ) as "OPM" on "P"."ID" = "OPM"."ID_PAGE"
-                    left outer join (
+                        ) as "OPM" on "P"."ID" = "OPM"."ID_PAGE"
+                        left outer join (
                         select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
                         from "TB_OBJ"
                         where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 30
                         group by "ID_PAGE"
-                    ) as "OCM" on "P"."ID" = "OCM"."ID_PAGE"
-                    left outer join (
+                        ) as "OCM" on "P"."ID" = "OCM"."ID_PAGE"
+                        left outer join (
                         select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
                         from "TB_OBJ"
                         where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 365
                         group by "ID_PAGE"
-                    ) as "OPY" on "P"."ID" = "OPY"."ID_PAGE"
-                    left outer join (
+                        ) as "OPY" on "P"."ID" = "OPY"."ID_PAGE"
+                        left outer join (
                         select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
                         from "TB_OBJ"
                         where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 365
                         group by "ID_PAGE"
-                    ) as "OCY" on "P"."ID" = "OCY"."ID_PAGE";
+                        ) as "OCY" on "P"."ID" = "OCY"."ID_PAGE"
+                ) as "R"
+                order by "R"."CY_COUNT_NN"/"R"."PY_COUNT" desc;
             """)
 
             l_response = ''
+            l_row_num = 0
             for \
                     l_page_id, l_page_name, \
                     l_dmin_pt, l_dmax_pt, l_count_pt, \
@@ -277,7 +282,7 @@ class CsApp(EcAppCore):
                     l_dmin_pm, l_dmax_pm, l_count_pm, \
                     l_dmin_cm, l_dmax_cm, l_count_cm, \
                     l_dmin_py, l_dmax_py, l_count_py, \
-                    l_dmin_cy, l_dmax_cy, l_count_cy in l_cursor:
+                    l_dmin_cy, l_dmax_cy, l_count_cy, _ in l_cursor:
 
                 l_dmin = l_dmin_pt
                 if l_dmin_ct is not None and l_dmin_ct < l_dmin:
@@ -300,29 +305,34 @@ class CsApp(EcAppCore):
 
                 l_response += """
                     <tr>
-                        <td>{0}</td>
-                        <td><a href="/page/{0}/{13}/{14}">{1}</a></td>
-                        <td>{2}</td>
-                        <td>{3}</td>
-                        <td style="text-align: right;">{4}</td>
-                        <td style="text-align: right;">{5}</td>
-                        <td style="text-align: right;">{6}</td>
-                        <td style="text-align: right;">{7}</td>
-                        <td style="text-align: right;">{8}</td>
-                        <td style="text-align: right;">{9}</td>
-                        <td style="text-align: right;">{10}</td>
-                        <td style="text-align: right;">{11}</td>
-                        <td style="text-align: right;">{12}</td>
+                        <td class="{15}">{0}</td>
+                        <td class="{15}"><a href="/page/{0}/{13}/{14}">{1}</a></td>
+                        <td class="{15}">{2}</td>
+                        <td class="{15}">{3}</td>
+                        <td class="{15}" style="text-align: right;">{4}</td>
+                        <td class="{15}" style="text-align: right;">{5}</td>
+                        <td class="{15}" style="text-align: right;">{6}</td>
+                        <td class="{15}" style="text-align: right;">{7}</td>
+                        <td class="{15}" style="text-align: right;">{8}</td>
+                        <td class="{15}" style="text-align: right;">{9}</td>
+                        <td class="{15}" style="text-align: right;">{10}</td>
+                        <td class="{15}" style="text-align: right;">{11}</td>
+                        <td class="{15}" style="text-align: right;">{12}</td>
                     <tr/>
                 """.format(
-                    l_page_id, l_page_name,
-                    l_dmin.strftime('%d/%m/%Y %H:%M'), l_dmax.strftime('%d/%m/%Y %H:%M'),
+                    l_page_id,
+                    l_page_name,
+                    l_dmin.strftime('%d/%m/%Y %H:%M'),
+                    l_dmax.strftime('%d/%m/%Y %H:%M'),
                     fmt_int_none(l_count_pt), fmt_int_none(l_count_ct), display_ratio(l_count_ct, l_count_pt),
                     fmt_int_none(l_count_py), fmt_int_none(l_count_cy), display_ratio(l_count_cy, l_count_py),
                     fmt_int_none(l_count_pm), fmt_int_none(l_count_cm), display_ratio(l_count_cm, l_count_pm),
                     datetime.datetime.now().strftime('%Y.%m.%d'),
-                    (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y.%m.%d')
+                    (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y.%m.%d'),
+                    'row_{0}'.format(l_row_num % 3)
                 )
+
+                l_row_num += 1
         except Exception as e:
             self.m_logger.warning('Page stats query failure: {0}'.format(repr(e)))
             raise
@@ -349,6 +359,18 @@ class CsApp(EcAppCore):
                     }}
                     td {{
                         font-family: monospace;
+                    }}
+                    tr:hover {{
+                        background-color: #f5f5f5
+                    }}
+                    td.row_0 {{
+                        background-color: #e5f5f8
+                    }}
+                    td.row_1 {{
+                        background-color: #d0e0e8
+                    }}
+                    td.row_2 {{
+                        background-color: #ffffff
                     }}
                 </style>
             </head>
@@ -680,6 +702,10 @@ class CsApp(EcAppCore):
                             l_one_img = None
                             if l_media_src is not None:
                                 l_match = re.search(r'w\=(\d+)\&h\=(\d+)', l_media_src)
+                                if l_match and l_match.group(1) == l_match.group(2) and l_base_64_fp is not None:
+                                    l_one_img = l_skeleton.format(l_base_64_fp, l_fmt_fp)
+
+                                l_match = re.search(r'/[ps](\d+)x(\d+)/', l_media_src)
                                 if l_match and l_match.group(1) == l_match.group(2) and l_base_64_fp is not None:
                                     l_one_img = l_skeleton.format(l_base_64_fp, l_fmt_fp)
 
