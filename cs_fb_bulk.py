@@ -234,7 +234,7 @@ class BulkDownloader:
 
         # self.get_pages()
         self.get_posts()
-        time.sleep(60 * 60)
+        time.sleep(60 * 60 * 3)
 
         self.m_logger.info('End bulk_download()')
 
@@ -1833,7 +1833,7 @@ class BulkDownloader:
                     # end of: if len(l_txt) > 10:
 
                     # release control to other threads
-                    time.sleep(.1)
+                    time.sleep(.001)
                 # end of loop: for l_file in p_file_list
 
                 # calculate the average ratio of dictionary hits

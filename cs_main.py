@@ -230,7 +230,8 @@ class CsApp(EcAppCore):
                         "OCM"."MIN_DT" as "CM_MIN_DT", "OCM"."MAX_DT" as "CM_MAX_DT", "OCM"."COUNT_COMM" as "CM_COUNT",
                         "OPY"."MIN_DT" as "PY_MIN_DT", "OPY"."MAX_DT" as "PY_MAX_DT", "OPY"."COUNT_POST" as "PY_COUNT",
                         "OCY"."MIN_DT" as "CY_MIN_DT", "OCY"."MAX_DT" as "CY_MAX_DT", "OCY"."COUNT_COMM" as "CY_COUNT",
-                        case when "OCY"."COUNT_COMM" is null then 0 else "OCY"."COUNT_COMM" end "CY_COUNT_NN"
+                        case when "OCY"."COUNT_COMM" is null then 0 else "OCY"."COUNT_COMM" end "CY_COUNT_NN",
+                        "OPW"."COUNT_POST" as "PW_COUNT"
                     from
                         "TB_PAGES" as "P"
                         join (
@@ -269,6 +270,12 @@ class CsApp(EcAppCore):
                         where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 365
                         group by "ID_PAGE"
                         ) as "OCY" on "P"."ID" = "OCY"."ID_PAGE"
+                        left outer join (
+                        select "ID_PAGE", count(1) as "COUNT_POST"
+                        from "TB_OBJ"
+                        where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
+                        group by "ID_PAGE"
+                        ) as "OPW" on "P"."ID" = "OPW"."ID_PAGE"
                 ) as "R"
                 order by "R"."CY_COUNT_NN"/"R"."PY_COUNT" desc;
             """)
@@ -282,7 +289,7 @@ class CsApp(EcAppCore):
                     l_dmin_pm, l_dmax_pm, l_count_pm, \
                     l_dmin_cm, l_dmax_cm, l_count_cm, \
                     l_dmin_py, l_dmax_py, l_count_py, \
-                    l_dmin_cy, l_dmax_cy, l_count_cy, _ in l_cursor:
+                    l_dmin_cy, l_dmax_cy, l_count_cy, _, l_count_pw in l_cursor:
 
                 l_dmin = l_dmin_pt
                 if l_dmin_ct is not None and l_dmin_ct < l_dmin:
@@ -302,6 +309,9 @@ class CsApp(EcAppCore):
                         return ''
                     else:
                         return '{:,d}'.format(p_num).replace(',', ' ')
+
+                # with of the bracket of posts to be displayed initially for the page (in days)
+                l_page_width = 7 if l_count_pw is not None and l_count_pw > 15 else 30
 
                 l_response += """
                     <tr>
@@ -328,7 +338,7 @@ class CsApp(EcAppCore):
                     fmt_int_none(l_count_py), fmt_int_none(l_count_cy), display_ratio(l_count_cy, l_count_py),
                     fmt_int_none(l_count_pm), fmt_int_none(l_count_cm), display_ratio(l_count_cm, l_count_pm),
                     datetime.datetime.now().strftime('%Y.%m.%d'),
-                    (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y.%m.%d'),
+                    (datetime.datetime.now() - datetime.timedelta(days=l_page_width)).strftime('%Y.%m.%d'),
                     'row_{0}'.format(l_row_num % 3)
                 )
 
@@ -449,9 +459,12 @@ class CsApp(EcAppCore):
                             "O"."N_LIKES",
                             "O"."N_SHARES",
                             "C"."COMM_COUNT",
-                            "M"."MEDIA_COUNT"
+                            "M"."MEDIA_COUNT",
+                            "M"."OCR_COUNT",
+                            "P"."TX_NAME"
                         from 
                             "TB_OBJ" as "O" 
+                            join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
                             left outer join (
                                 select "ID_POST", count(1) as "COMM_COUNT"
                                 from "TB_OBJ"
@@ -459,7 +472,10 @@ class CsApp(EcAppCore):
                                 group by "ID_POST"
                             ) as "C" on "O"."ID" = "C"."ID_POST"
                             left outer join (
-                                select "ID_OWNER", count(1) as "MEDIA_COUNT"
+                                select 
+                                    "ID_OWNER", 
+                                    count(1) as "MEDIA_COUNT",
+                                    sum(case when "TX_TEXT" is not null then 1 else 0 end) "OCR_COUNT"
                                 from "TB_MEDIA"
                                 group by "ID_OWNER"
                             ) as "M" on "O"."ID" = "M"."ID_OWNER"
@@ -477,6 +493,7 @@ class CsApp(EcAppCore):
             self.m_logger.info('SQL: ' + l_cursor.query.decode('utf-8'))
 
             l_response = ''
+            l_page_name = ''
             for l_id_post, \
                 l_fb_type, \
                 l_fb_status_type, \
@@ -489,7 +506,9 @@ class CsApp(EcAppCore):
                 l_likes, \
                 l_shares,\
                 l_comm_count,\
-                l_media_count \
+                l_media_count,\
+                l_ocr_count,\
+                l_page_name\
                     in l_cursor:
 
                 def cut_max(s, p_max_len):
@@ -525,7 +544,8 @@ class CsApp(EcAppCore):
                     l_likes,
                     l_shares,
                     l_comm_count,
-                    l_media_count if l_media_count is not None else '',
+                    ('{0}'.format(l_media_count) if l_media_count is not None else '') +
+                        ('*' if l_ocr_count is not None and l_ocr_count > 0 else ''),
                     l_display_text
                 )
         except Exception as e:
@@ -550,10 +570,14 @@ class CsApp(EcAppCore):
                         td {{
                             font-family: monospace;
                         }}
+                        h1, h2 {{
+                            font-family: sans-serif;
+                        }}
                     </style>
                 </head>
                 <body>
                     <h1>Page: {0}</h1>
+                    <h2>Path: {1}</h1>
                     <table>
                         <tr>
                             <th>Date</th>
@@ -564,11 +588,11 @@ class CsApp(EcAppCore):
                             <th>Media</th>
                             <th>Text</th>
                         <tr/>
-                        {1}
+                        {2}
                     </table>
                 </body>
                 </html>
-                """.format(p_request_handler.path, l_response)
+                """.format(l_page_name, p_request_handler.path, l_response)
 
     def one_post(self, p_request_handler):
         """
@@ -599,9 +623,11 @@ class CsApp(EcAppCore):
                         "O"."N_LIKES",
                         "O"."N_SHARES",
                         "M"."IMG_COUNT",
-                        "U"."ST_NAME"
+                        "U"."ST_NAME",
+                        "P"."TX_NAME"
                     from 
                         "TB_OBJ" as "O"
+                        join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
                         left outer join (
                             select "ID_OWNER", count(1) as "IMG_COUNT" 
                             from "TB_MEDIA" 
@@ -627,7 +653,8 @@ class CsApp(EcAppCore):
                 l_likes, \
                 l_shares,\
                 l_img_count,\
-                l_user_name\
+                l_user_name,\
+                l_page_name\
                     in l_cursor:
 
                 # l_img_display = ''
@@ -664,6 +691,8 @@ class CsApp(EcAppCore):
                                 ,"ST_FORMAT"
                                 ,"ST_FORMAT_PIC"
                                 ,"ST_FORMAT_FP"
+                                ,"TX_TEXT"
+                                ,"TX_VOCABULARY"
                             from "TB_MEDIA" 
                             where not "F_FROM_PARENT" and "ID_OWNER" = %s
                             order by "ID_MEDIA_INTERNAL";
@@ -683,7 +712,9 @@ class CsApp(EcAppCore):
                     l_base_64_fp,\
                     l_fmt,\
                     l_fmt_pic,\
-                    l_fmt_fp\
+                    l_fmt_fp,\
+                    l_text,\
+                    l_vocabulary\
                     in l_cursor_media:
 
                         l_skeleton = """
@@ -736,8 +767,25 @@ class CsApp(EcAppCore):
                                     font-weight: bold; vertical-align: top;">Full&nbsp;Picture:</td>
                                 <td>{3}</td>
                             <tr/>
+                            <tr>
+                                <td style="font-family: sans-serif; 
+                                    font-weight: bold; vertical-align: top;">Text:</td>
+                                <td>{5}</td>
+                            <tr/>
+                            <tr>
+                                <td style="font-family: sans-serif; 
+                                    font-weight: bold; vertical-align: top;">Vocabulary:</td>
+                                <td>{6}</td>
+                            <tr/>
                             {4}
-                        """.format(l_media_target, l_media_src, l_picture, l_full_picture, l_one_img)
+                        """.format(
+                            l_media_target,
+                            l_media_src,
+                            l_picture,
+                            l_full_picture,
+                            l_one_img,
+                            l_text,
+                            l_vocabulary)
 
                 l_cursor_media.close()
                 self.m_connectionPool.putconn(l_conn_media)
@@ -746,6 +794,10 @@ class CsApp(EcAppCore):
                     <tr>
                         <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">ID</td>
                         <td>{0}</td>
+                    <tr/>
+                    <tr>
+                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Page</td>
+                        <td>{13}</td>
                     <tr/>
                     <tr>
                         <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">From</td>
@@ -802,7 +854,8 @@ class CsApp(EcAppCore):
                     l_likes,
                     l_shares,
                     l_img_string,
-                    l_user_name
+                    l_user_name,
+                    l_page_name
                 )
         except Exception as e:
             self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
