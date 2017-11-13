@@ -6,8 +6,8 @@ from ec_app_core import *
 from cs_fb_bulk import *
 # from cs_fb_connect import *
 
-import json
 import sys
+import collections
 
 __author__ = 'Pavan Mahalingam'
 
@@ -748,34 +748,34 @@ class CsApp(EcAppCore):
 
                         l_img_string += """
                             <tr>
-                                <td style="font-family: sans-serif; border-top: 2px solid black; 
+                                <td class="Post" style="font-family: sans-serif; border-top: 2px solid black; 
                                     font-weight: bold; vertical-align: top;">Media&nbsp;Target:</td>
-                                <td style="border-top: 2px solid black;">{0}</td>
+                                <td class="Post" style="border-top: 2px solid black;">{0}</td>
                             <tr/>
                             <tr>
-                                <td style="font-family: sans-serif; 
+                                <td class="Post" style="font-family: sans-serif; 
                                     font-weight: bold; vertical-align: top;">Media&nbsp;Src:</td>
-                                <td>{1}</td>
+                                <td class="Post">{1}</td>
                             <tr/>
                             <tr>
-                                <td style="font-family: sans-serif; 
+                                <td class="Post" style="font-family: sans-serif; 
                                     font-weight: bold; vertical-align: top;">Picture:</td>
-                                <td>{2}</td>
+                                <td class="Post">{2}</td>
                             <tr/>
                             <tr>
-                                <td style="font-family: sans-serif; 
+                                <td class="Post" style="font-family: sans-serif; 
                                     font-weight: bold; vertical-align: top;">Full&nbsp;Picture:</td>
-                                <td>{3}</td>
+                                <td class="Post">{3}</td>
                             <tr/>
                             <tr>
-                                <td style="font-family: sans-serif; 
+                                <td class="Post" style="font-family: sans-serif; 
                                     font-weight: bold; vertical-align: top;">Text:</td>
-                                <td>{5}</td>
+                                <td class="Post">{5}</td>
                             <tr/>
                             <tr>
-                                <td style="font-family: sans-serif; 
+                                <td class="Post" style="font-family: sans-serif; 
                                     font-weight: bold; vertical-align: top;">Vocabulary:</td>
-                                <td>{6}</td>
+                                <td class="Post">{6}</td>
                             <tr/>
                             {4}
                         """.format(
@@ -792,53 +792,53 @@ class CsApp(EcAppCore):
 
                 l_response += """
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">ID</td>
-                        <td>{0}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">ID</td>
+                        <td class="Post">{0}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Page</td>
-                        <td>{13}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Page</td>
+                        <td class="Post">{13}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">From</td>
-                        <td>{12}</td>
+                        <td class="Post"style="font-family: sans-serif; font-weight: bold; vertical-align: top;">From</td>
+                        <td class="Post">{12}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">FB&nbsp;Type</td>
-                        <td>{1}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">FB&nbsp;Type</td>
+                        <td class="Post">{1}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; 
+                        <td class="Post" style="font-family: sans-serif; 
                             font-weight: bold; vertical-align: top;">FB&nbsp;Status&nbsp;Type</td>
-                        <td>{2}</td>
+                        <td class="Post">{2}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Date:</td>
-                        <td>{3}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Date:</td>
+                        <td class="Post">{3}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Name:</td>
-                        <td>{4}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Name:</td>
+                        <td class="Post">{4}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Caption:</td>
-                        <td>{5}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Caption:</td>
+                        <td class="Post">{5}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Description:</td>
-                        <td>{6}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Description:</td>
+                        <td class="Post">{6}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Story:</td>
-                        <td>{7}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Story:</td>
+                        <td class="Post">{7}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Message:</td>
-                        <td>{8}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Message:</td>
+                        <td class="Post">{8}</td>
                     <tr/>
                     <tr>
-                        <td style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Likes/Shares:</td>
-                        <td>{9}/{10}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Likes/Shares:</td>
+                        <td class="Post">{9}/{10}</td>
                     <tr/>
                     {11}
                 """.format(
@@ -863,27 +863,153 @@ class CsApp(EcAppCore):
 
         l_cursor.close()
         self.m_connectionPool.putconn(l_conn)
+
+        # Comments
+        l_comments, _, _ = self.get_comments(l_post_id, 1)
+
         return """
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
             <head>
                 <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
                 <style>
-                    table, td {{
+                    table.Post, td.Post {{
                         border: 1px solid black;
                     }}
-                    td {{
+                    td.Post {{
                         padding-left: 5pt;
                         padding-right: 5pt;
                         padding-top: 2pt;
                         padding-bottom: 2pt;
                         font-family: monospace;
                     }}
+                    p.Comment {{
+                        margin:0;
+                        font-family: monospace;
+                        padding-top: 0;
+                        padding-bottom: 3pt;
+                        padding-left: 0;
+                    }}
                 </style>
             </head>
             <body>
-                <table style="border-collapse: collapse;">
+                <table class="Post" style="border-collapse: collapse;">
                     {0}
                 </table>
+                <div style="border: 1px solid black; padding-top: 4pt;">
+                    {1}
+                </div>
             </body>
             </html>
-        """.format(l_response)
+        """.format(l_response, l_comments)
+
+    def get_comments(self, p_parent_id, p_depth, p_bkg=0, p_img_fifo=collections.deque(20*[0], 20)):
+        """
+
+        :param p_parent_id:
+        :param p_depth:
+        :param p_bkg:
+        :param p_img_fifo:
+        :return:
+        """
+
+        l_bkg_list = ['AntiqueWhite', 'Aquamarine', 'Khaki', 'Lavender', 'Thistle', 'Pink']
+        l_bkg_id = p_bkg
+        l_img_fifo = p_img_fifo
+
+        l_conn = self.m_connectionPool.getconn('get_comments()')
+        l_cursor = l_conn.cursor()
+        l_html = ''
+        try:
+            l_cursor.execute(
+                """
+                    select 
+                        "O"."ID",
+                        "O"."DT_CRE",
+                        "O"."TX_MESSAGE",
+                        "O"."N_LIKES",
+                        "M"."ST_FORMAT",
+                        "M"."TX_BASE64",
+                        "M"."TX_TEXT",
+                        "M"."TX_VOCABULARY",
+                        "M"."TX_MEDIA_SRC",
+                        "U"."ST_NAME"
+                    from 
+                        "TB_OBJ" as "O"
+                        left outer join "TB_MEDIA" as "M" on "O"."ID" = "M"."ID_OWNER"
+                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                    where "O"."ID_FATHER" = %s and "O"."ST_TYPE"='Comm'
+                    order by "O"."DT_CRE";
+                """, (p_parent_id,)
+            )
+
+            for l_id, l_dt, l_msg, l_likes, l_fmt, l_b64, l_txt, l_voc, l_src, l_user_name in l_cursor:
+                l_color = l_bkg_list[l_bkg_id % len(l_bkg_list)]
+
+                if l_b64 is not None and len(l_b64) > 0:
+                    l_is_sticker = True if re.search('/v/t39\.1997-6', l_src) else False
+                    l_previous_img_count = sum(list(l_img_fifo))
+                    l_float = l_previous_img_count < 3 or l_is_sticker
+
+                    l_para_style = ' style="background-color: {0};"'.format(l_color)
+                    l_image_html = """
+                        {0}<img style="{1}{2}padding: 1em; background-color: {3}; " '.format(l_color) 
+                        src="data:image/{4};base64,{5}"/>
+                    """.format(
+                        '<br/>' if not l_float else '',
+                        'float: right; ' if l_float else '',
+                        'width: 50px; height: 50px; ' if l_is_sticker else '',
+                        l_color,
+                        l_fmt,
+                        l_b64)
+
+                    l_bkg_id += 1
+
+                    l_vars = 'l_img_fifo:{0} l_previous_img_count:{1} l_is_sticker:{2}'.format(
+                        list(l_img_fifo), l_previous_img_count, l_is_sticker)
+
+                    if not l_is_sticker:
+                        l_img_fifo.append(1)
+                    else:
+                        l_img_fifo.append(0)
+                else:
+                    l_image_html = ''
+                    l_para_style = ''
+                    l_img_fifo.append(0)
+                    l_vars = ''
+
+                l_html += """
+                    <div style="margin-left: {0}em;">
+                        <p class="Comment"{1}>
+                            <table style="display:inline;"><tr><td>
+                            <span style="color: DarkBlue;font-weight: bold;">{2}</span></td><td> 
+                            <span style="color: DarkGray; font-size: smaller;">[{3} / {4} likes]</span>
+                            </td><td style="color: Red;">{8}<td></tr></table> 
+                            {5}
+                            {6} 
+                            <span style="color: Green;">{7}</span>
+                        </p>
+                    </div>
+                """.format(
+                    (p_depth-1)*2 + 1,
+                    l_para_style,
+                    l_user_name,
+                    l_dt.strftime('%d/%m/%Y %H:%M'),
+                    l_likes,
+                    l_msg,
+                    l_image_html,
+                    '<br/>{0}/{1}'.format(l_txt, l_voc) if l_txt is not None and len(l_txt) > 0 else '',
+                    ''  # l_vars
+                )
+
+                l_html_add, l_bkg_id, l_img_fifo = self.get_comments(l_id, p_depth+1, l_bkg_id, l_img_fifo)
+
+                l_html += l_html_add
+
+        except Exception as e:
+            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
+            raise
+
+        l_cursor.close()
+        self.m_connectionPool.putconn(l_conn)
+
+        return l_html, l_bkg_id, l_img_fifo
