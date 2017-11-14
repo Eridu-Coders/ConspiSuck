@@ -602,6 +602,12 @@ class CsApp(EcAppCore):
         :return: The story HTML.
         """
 
+        def fmt_int_none(p_num):
+            if p_num is None:
+                return ''
+            else:
+                return '{:,d}'.format(p_num).replace(',', ' ')
+
         # the story ID is the last member of the URL
         l_post_id = re.sub('/post/', '', p_request_handler.path)
         self.m_logger.info('l_post_id: {0}'.format(l_post_id))
@@ -624,7 +630,8 @@ class CsApp(EcAppCore):
                         "O"."N_SHARES",
                         "M"."IMG_COUNT",
                         "U"."ST_NAME",
-                        "P"."TX_NAME"
+                        "P"."TX_NAME",
+                        "C"."COMMENT_COUNT"
                     from 
                         "TB_OBJ" as "O"
                         join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
@@ -635,6 +642,11 @@ class CsApp(EcAppCore):
                             group by "ID_OWNER"  
                         ) as "M" on "O"."ID" = "M"."ID_OWNER"
                         left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                        left outer join ( 
+                            select "ID_POST", count(1) as "COMMENT_COUNT"
+                            from "TB_OBJ" where "ST_TYPE" = 'Comm'
+                            group by "ID_POST"
+                        ) as "C" on "O"."ID" = "C"."ID_POST"
                     where "O"."ID" = %s;
                 """, (l_post_id,)
             )
@@ -654,7 +666,8 @@ class CsApp(EcAppCore):
                 l_shares,\
                 l_img_count,\
                 l_user_name,\
-                l_page_name\
+                l_page_name,\
+                l_comment_count\
                     in l_cursor:
 
                 # l_img_display = ''
@@ -792,19 +805,23 @@ class CsApp(EcAppCore):
 
                 l_response += """
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">ID</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">ID</td>
                         <td class="Post">{0}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Page</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Page</td>
                         <td class="Post">{13}</td>
                     <tr/>
                     <tr>
-                        <td class="Post"style="font-family: sans-serif; font-weight: bold; vertical-align: top;">From</td>
+                        <td class="Post"style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">From</td>
                         <td class="Post">{12}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">FB&nbsp;Type</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">FB&nbsp;Type</td>
                         <td class="Post">{1}</td>
                     <tr/>
                     <tr>
@@ -813,32 +830,39 @@ class CsApp(EcAppCore):
                         <td class="Post">{2}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Date:</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Date:</td>
                         <td class="Post">{3}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Name:</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Name:</td>
                         <td class="Post">{4}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Caption:</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Caption:</td>
                         <td class="Post">{5}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Description:</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Description:</td>
                         <td class="Post">{6}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Story:</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Story:</td>
                         <td class="Post">{7}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Message:</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Message:</td>
                         <td class="Post">{8}</td>
                     <tr/>
                     <tr>
-                        <td class="Post" style="font-family: sans-serif; font-weight: bold; vertical-align: top;">Likes/Shares:</td>
-                        <td class="Post">{9}/{10}</td>
+                        <td class="Post" style="font-family: sans-serif; font-weight: bold; 
+                            vertical-align: top;">Likes/Shares/Comments:</td>
+                        <td class="Post">{9}&nbsp;/&nbsp;{10}&nbsp;/&nbsp;{14}</td>
                     <tr/>
                     {11}
                 """.format(
@@ -851,11 +875,12 @@ class CsApp(EcAppCore):
                     l_desc,
                     l_story,
                     l_message,
-                    l_likes,
-                    l_shares,
+                    fmt_int_none(l_likes),
+                    fmt_int_none(l_shares),
                     l_img_string,
                     l_user_name,
-                    l_page_name
+                    l_page_name,
+                    fmt_int_none(l_comment_count)
                 )
         except Exception as e:
             self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
@@ -886,8 +911,18 @@ class CsApp(EcAppCore):
                         margin:0;
                         font-family: monospace;
                         padding-top: 0;
-                        padding-bottom: 3pt;
+                        padding-bottom: 4px;
                         padding-left: 0;
+                    }}
+                    td {{
+                        margin: 0;
+                        padding: 0;
+                        border-spacing: 0;
+                    }}
+                    table {{
+                        margin: 0;
+                        padding: 0;
+                        border-spacing: 0;
                     }}
                 </style>
             </head>
@@ -980,7 +1015,7 @@ class CsApp(EcAppCore):
                 l_html += """
                     <div style="margin-left: {0}em;">
                         <p class="Comment"{1}>
-                            <table style="display:inline;"><tr><td>
+                            <table style="display:inline; border-collapse: collapse;"><tr><td>
                             <span style="color: DarkBlue;font-weight: bold;">{2}</span></td><td> 
                             <span style="color: DarkGray; font-size: smaller;">[{3} / {4} likes]</span>
                             </td><td style="color: Red;">{8}<td></tr></table> 
