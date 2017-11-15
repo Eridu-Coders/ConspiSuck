@@ -1632,12 +1632,14 @@ class BulkDownloader:
                 l_bas64_select = None
                 if l_media_src is not None:
                     l_match = re.search(r'w=(\d+)&h=(\d+)', l_media_src)
-                    if l_match and l_match.group(1) == l_match.group(2) and l_base64_fp is not None:
+                    if l_match and l_match.group(1) == l_match.group(2) \
+                            and l_base64_fp is not None and len(l_base64_fp) > 0:
                         l_bas64_select = l_base64_fp
 
                     # p130x130
                     l_match = re.search(r'/[ps](\d+)x(\d+)/', l_media_src)
-                    if l_match and l_match.group(1) == l_match.group(2) and l_base64_fp is not None:
+                    if l_match and l_match.group(1) == l_match.group(2) \
+                            and l_base64_fp is not None and len(l_base64_fp) > 0:
                         l_bas64_select = l_base64_fp
 
                 if l_bas64_select is None:
@@ -1646,6 +1648,9 @@ class BulkDownloader:
                     else:
                         mark_as_ocred()
                         continue
+
+            self.m_logger.info('len(l_bas64_select): {0}'.format(
+                len(l_bas64_select) if l_bas64_select is not None else 'None'))
 
             # the raw image as it is in the DB
             l_raw = Image.open(io.BytesIO(base64.b64decode(l_bas64_select)))

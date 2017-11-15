@@ -204,6 +204,8 @@ class CsApp(EcAppCore):
                     </body>
                 </html>
             """
+        elif re.search('^/user/', p_request_handler.path):
+            return self.one_user(p_request_handler)
         elif re.search('^/page/', p_request_handler.path):
             return self.one_page(p_request_handler)
         elif re.search('^/post/', p_request_handler.path):
@@ -311,7 +313,7 @@ class CsApp(EcAppCore):
                         return '{:,d}'.format(p_num).replace(',', ' ')
 
                 # with of the bracket of posts to be displayed initially for the page (in days)
-                l_page_width = 7 if l_count_pw is not None and l_count_pw > 15 else 30
+                l_page_width = 7 if l_count_pw is not None and l_count_pw > 40 else 30
 
                 l_response += """
                     <tr>
@@ -461,10 +463,13 @@ class CsApp(EcAppCore):
                             "C"."COMM_COUNT",
                             "M"."MEDIA_COUNT",
                             "M"."OCR_COUNT",
-                            "P"."TX_NAME"
+                            "P"."TX_NAME",
+                            "O"."ID_USER",
+                            "U"."ST_NAME"
                         from 
                             "TB_OBJ" as "O" 
                             join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
+                            left outer join "TB_USER" as "U" on "U"."ID" = "O"."ID_USER"
                             left outer join (
                                 select "ID_POST", count(1) as "COMM_COUNT"
                                 from "TB_OBJ"
@@ -508,7 +513,9 @@ class CsApp(EcAppCore):
                 l_comm_count,\
                 l_media_count,\
                 l_ocr_count,\
-                l_page_name\
+                l_page_name,\
+                l_id_user,\
+                l_user_name\
                     in l_cursor:
 
                 def cut_max(s, p_max_len):
@@ -517,30 +524,37 @@ class CsApp(EcAppCore):
                     elif len(s) < p_max_len:
                         return s
                     else:
-                        return s[:p_max_len] + '...'
+                        return s[:int(p_max_len)] + '...'
 
-                l_name = cut_max(l_name, 30)
-                l_caption = cut_max(l_caption, 30)
-                l_desc = cut_max(l_desc, 30)
-                l_story = cut_max(l_story, 30)
-                l_message = cut_max(l_message, 50)
+                l_total = len(l_name) + len(l_caption) + len(l_desc) + len(l_story) + 2*len(l_message)
+                l_target = 100
 
-                l_display_text = '■'.join([l_name, l_caption, l_desc, l_story, l_message])
+                if l_total > 0:
+                    l_name = cut_max(l_name, len(l_name) * l_target / l_total)
+                    l_caption = cut_max(l_caption, len(l_caption) * l_target / l_total)
+                    l_desc = cut_max(l_desc, len(l_desc) * l_target / l_total)
+                    l_story = cut_max(l_story, len(l_story) * l_target / l_total)
+                    l_message = cut_max(l_message, len(l_message) * 2 * l_target / l_total)
+
+                l_display_text = '♦'.join([l_name, l_caption, l_desc, l_story, l_message])
 
                 l_response += """
                             <tr>
-                                <td><a href="https://www.facebook.com/{0}" target="_blank">{1}</a></td>
-                                <td><a href="/post/{0}" target="_blank">{2}</a></td>
-                                <td>{3}</td>
-                                <td>{4}</td>
+                                <td><a class="FB_Link" href="https://www.facebook.com/{0}" target="_blank">{1}</a></td>
+                                <td><a class="Post_Link" href="/post/{0}" target="_blank">{2}</a></td>
+                                <td><a class="User_Link" href="/user/{3}" target="_blank">{4}</a></td>
                                 <td>{5}</td>
                                 <td>{6}</td>
                                 <td>{7}</td>
+                                <td>{8}</td>
+                                <td>{9}</td>
                             <tr/>
                         """.format(
                     l_id_post,
                     l_dt.strftime('%d/%m/%Y %H:%M'),
                     l_fb_type + ('/' + l_fb_status_type if len(l_fb_status_type) > 0 else ''),
+                    l_id_user,
+                    cut_max(l_user_name, 25),
                     l_likes,
                     l_shares,
                     l_comm_count,
@@ -573,6 +587,36 @@ class CsApp(EcAppCore):
                         h1, h2 {{
                             font-family: sans-serif;
                         }}
+                        a {{
+                            text-decoration: none;
+                        }}
+                        a.FB_Link{{
+                            font-weight: bold;
+                            color: RoyalBlue;
+                        }}
+                        a.FB_Link:hover{{
+                            color: RoyalBlue;
+                            font-style: italic;
+                            text-decoration: underline;
+                        }}
+                        a.Post_Link{{
+                            font-weight: bold;
+                            color: SeaGreen;
+                        }}
+                        a.Post_Link:hover{{
+                            color: SeaGreen;
+                            font-style: italic;
+                            text-decoration: underline;
+                        }}
+                        a.User_Link{{
+                            font-weight: bold;
+                            color: IndianRed;
+                        }}
+                        a.User_Link:hover{{
+                            color: IndianRed;
+                            font-style: italic;
+                            text-decoration: underline;
+                        }}
                     </style>
                 </head>
                 <body>
@@ -582,6 +626,7 @@ class CsApp(EcAppCore):
                         <tr>
                             <th>Date</th>
                             <th>FB Type</th>
+                            <th>From</th>
                             <th>Likes</th>
                             <th>Shares</th>
                             <th>Comm.</th>
@@ -609,8 +654,29 @@ class CsApp(EcAppCore):
                 return '{:,d}'.format(p_num).replace(',', ' ')
 
         # the story ID is the last member of the URL
-        l_post_id = re.sub('/post/', '', p_request_handler.path)
+        l_match = re.search('/post/([\d_]+)$', p_request_handler.path)
+        if l_match:
+            l_post_id = l_match.group(1)
+            l_comment_id = None
+        else:
+            l_match = re.search('/post/([\d_]+)/([\d_]+)$', p_request_handler.path)
+            if l_match:
+                l_post_id = l_match.group(1)
+                l_comment_id = l_match.group(2)
+            else:
+                return """
+                    <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
+                    <head>
+                        <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                    </head>
+                    <body>
+                        <h1>Cannot extract Post ID (+ optionally Comm ID) from: {0}</h1>
+                    </body>
+                    </html>
+                """.format(p_request_handler.path)
+
         self.m_logger.info('l_post_id: {0}'.format(l_post_id))
+        self.m_logger.info('l_comment_id: {0}'.format(l_comment_id))
 
         l_conn = self.m_connectionPool.getconn('oneStory()')
         l_cursor = l_conn.cursor()
@@ -631,7 +697,8 @@ class CsApp(EcAppCore):
                         "M"."IMG_COUNT",
                         "U"."ST_NAME",
                         "P"."TX_NAME",
-                        "C"."COMMENT_COUNT"
+                        "C"."COMMENT_COUNT",
+                        "O"."ID_USER"
                     from 
                         "TB_OBJ" as "O"
                         join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
@@ -667,7 +734,8 @@ class CsApp(EcAppCore):
                 l_img_count,\
                 l_user_name,\
                 l_page_name,\
-                l_comment_count\
+                l_comment_count,\
+                l_id_user\
                     in l_cursor:
 
                 # l_img_display = ''
@@ -817,7 +885,7 @@ class CsApp(EcAppCore):
                     <tr>
                         <td class="Post"style="font-family: sans-serif; font-weight: bold; 
                             vertical-align: top;">From</td>
-                        <td class="Post">{12}</td>
+                        <td class="Post"><a class="User_Link" href="/user/{15}" target="_blank">{12}</a></td>
                     <tr/>
                     <tr>
                         <td class="Post" style="font-family: sans-serif; font-weight: bold; 
@@ -880,7 +948,8 @@ class CsApp(EcAppCore):
                     l_img_string,
                     l_user_name,
                     l_page_name,
-                    fmt_int_none(l_comment_count)
+                    fmt_int_none(l_comment_count),
+                    l_id_user
                 )
         except Exception as e:
             self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
@@ -890,7 +959,7 @@ class CsApp(EcAppCore):
         self.m_connectionPool.putconn(l_conn)
 
         # Comments
-        l_comments, _, _ = self.get_comments(l_post_id, 1)
+        l_comments, _, _ = self.get_comments(l_post_id, l_comment_id, 1)
 
         return """
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
@@ -924,6 +993,36 @@ class CsApp(EcAppCore):
                         padding: 0;
                         border-spacing: 0;
                     }}
+                    a {{
+                        text-decoration: none;
+                    }}
+                    a.FB_Link{{
+                        font-weight: bold;
+                        color: RoyalBlue;
+                    }}
+                    a.FB_Link:hover{{
+                        color: RoyalBlue;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.Post_Link{{
+                        font-weight: bold;
+                        color: SeaGreen;
+                    }}
+                    a.Post_Link:hover{{
+                        color: SeaGreen;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.User_Link{{
+                        font-weight: bold;
+                        color: IndianRed;
+                    }}
+                    a.User_Link:hover{{
+                        color: IndianRed;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
                 </style>
             </head>
             <body>
@@ -937,7 +1036,7 @@ class CsApp(EcAppCore):
             </html>
         """.format(l_response, l_comments)
 
-    def get_comments(self, p_parent_id, p_depth, p_bkg=0, p_img_fifo=collections.deque(20*[0], 20)):
+    def get_comments(self, p_parent_id, p_comment_anchor_id, p_depth, p_bkg=0, p_img_fifo=collections.deque(20*[0], 20)):
         """
 
         :param p_parent_id:
@@ -967,7 +1066,8 @@ class CsApp(EcAppCore):
                         "M"."TX_TEXT",
                         "M"."TX_VOCABULARY",
                         "M"."TX_MEDIA_SRC",
-                        "U"."ST_NAME"
+                        "U"."ST_NAME",
+                        "O"."ID_USER"
                     from 
                         "TB_OBJ" as "O"
                         left outer join "TB_MEDIA" as "M" on "O"."ID" = "M"."ID_OWNER"
@@ -977,7 +1077,7 @@ class CsApp(EcAppCore):
                 """, (p_parent_id,)
             )
 
-            for l_id, l_dt, l_msg, l_likes, l_fmt, l_b64, l_txt, l_voc, l_src, l_user_name in l_cursor:
+            for l_id, l_dt, l_msg, l_likes, l_fmt, l_b64, l_txt, l_voc, l_src, l_user_name, l_id_user in l_cursor:
                 l_color = l_bkg_list[l_bkg_id % len(l_bkg_list)]
 
                 if l_b64 is not None and len(l_b64) > 0:
@@ -1013,10 +1113,10 @@ class CsApp(EcAppCore):
                     l_vars = ''
 
                 l_html += """
-                    <div style="margin-left: {0}em;">
+                    <div{10} style="margin-left: {0}em;">
                         <p class="Comment"{1}>
                             <table style="display:inline; border-collapse: collapse;"><tr><td>
-                            <span style="color: DarkBlue;font-weight: bold;">{2}</span></td><td> 
+                            <a class="User_Link" href="/user/{9}" target="_blank">{2}</a></td><td> 
                             <span style="color: DarkGray; font-size: smaller;">[{3} / {4} likes]</span>
                             </td><td style="color: Red;">{8}<td></tr></table> 
                             {5}
@@ -1033,10 +1133,13 @@ class CsApp(EcAppCore):
                     l_msg,
                     l_image_html,
                     '<br/>{0}/{1}'.format(l_txt, l_voc) if l_txt is not None and len(l_txt) > 0 else '',
-                    ''  # l_vars
+                    '',  # l_vars
+                    l_id_user,
+                    ' id="K{0}"'.format(p_comment_anchor_id) if l_id == p_comment_anchor_id else ''
                 )
 
-                l_html_add, l_bkg_id, l_img_fifo = self.get_comments(l_id, p_depth+1, l_bkg_id, l_img_fifo)
+                l_html_add, l_bkg_id, l_img_fifo = \
+                    self.get_comments(l_id, p_comment_anchor_id, p_depth+1, l_bkg_id, l_img_fifo)
 
                 l_html += l_html_add
 
@@ -1048,3 +1151,227 @@ class CsApp(EcAppCore):
         self.m_connectionPool.putconn(l_conn)
 
         return l_html, l_bkg_id, l_img_fifo
+
+    def one_user(self, p_request_handler):
+        """
+
+        :param p_request_handler:
+        :return:
+        """
+
+        def cut_max(s, p_max_len):
+            if s is None or len(s) == 0:
+                return ''
+            elif len(s) < p_max_len:
+                return s
+            else:
+                return s[:int(p_max_len)] + '...'
+
+        def fmt_int_none(p_num):
+            if p_num is None:
+                return ''
+            else:
+                return '{:,d}'.format(p_num).replace(',', ' ')
+
+        l_response = ''
+        # the user ID is the last member of the URL
+        l_user_id = re.sub('/user/', '', p_request_handler.path)
+        self.m_logger.info('l_post_id: {0}'.format(l_user_id))
+
+        l_conn = self.m_connectionPool.getconn('oneStory()')
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute(
+                """
+                    select 
+                        "O"."ID",
+                        "O"."ID_POST",
+                        "O"."ID_PAGE",
+                        "O"."ST_TYPE",
+                        "O"."ST_FB_TYPE",
+                        "O"."ST_FB_STATUS_TYPE",
+                        "O"."DT_CRE",
+                        "O"."TX_NAME",
+                        "O"."TX_CAPTION", 
+                        "O"."TX_DESCRIPTION",
+                        "O"."TX_STORY",
+                        "O"."TX_MESSAGE",
+                        "O"."N_LIKES",
+                        "O"."N_SHARES",
+                        "M"."IMG_COUNT",
+                        "U"."ST_NAME",
+                        "P"."TX_NAME",
+                        "C"."COMMENT_COUNT",
+                        "N"."POST_COUNT"
+                    from 
+                        "TB_OBJ" as "O"
+                        join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
+                        left outer join (
+                            select "ID_OWNER", count(1) as "IMG_COUNT" 
+                            from "TB_MEDIA" 
+                            where not "F_FROM_PARENT"
+                            group by "ID_OWNER"  
+                        ) as "M" on "O"."ID" = "M"."ID_OWNER"
+                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                        left outer join ( 
+                            select "ID_POST", count(1) as "COMMENT_COUNT"
+                            from "TB_OBJ" where "ST_TYPE" = 'Comm'
+                            group by "ID_POST"
+                        ) as "C" on "O"."ID" = "C"."ID_POST"
+                        left outer join ( 
+                            select "ID_PAGE", count(1) as "POST_COUNT"
+                            from "TB_OBJ" 
+                            where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
+                            group by "ID_PAGE"
+                        ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
+                    where "O"."ID_USER" = %s
+                    order by "O"."DT_CRE" desc;
+                """, (l_user_id,)
+            )
+        except Exception as e:
+            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
+            raise
+
+        l_user_name = ''
+        for l_id,\
+            l_id_post,\
+            l_id_page, \
+            l_type, \
+            l_fb_type, \
+            l_fb_status_type, \
+            l_dt, \
+            l_name, \
+            l_caption, \
+            l_desc, \
+            l_story, \
+            l_message, \
+            l_likes, \
+            l_shares, \
+            l_img_count, \
+            l_user_name, \
+            l_page_name, \
+            l_comment_count,\
+            l_page_post_count \
+                in l_cursor:
+
+            l_total = len(l_name) + len(l_caption) + len(l_desc) + len(l_story) + 2 * len(l_message)
+            l_target = 100
+
+            if l_total > 0:
+                l_name = cut_max(l_name, len(l_name) * l_target / l_total)
+                l_caption = cut_max(l_caption, len(l_caption) * l_target / l_total)
+                l_desc = cut_max(l_desc, len(l_desc) * l_target / l_total)
+                l_story = cut_max(l_story, len(l_story) * l_target / l_total)
+                l_message = cut_max(l_message, len(l_message) * 2 * l_target / l_total)
+
+            l_display_text = '♦'.join([l_name, l_caption, l_desc, l_story, l_message])
+
+            # with of the bracket of posts to be displayed initially for the page (in days)
+            l_page_width = 7 if l_page_post_count is not None and l_page_post_count > 40 else 30
+
+            l_response += """
+                    <tr>
+                        <td><a class="FB_Link" href="https://www.facebook.com/{7}" target="_blank">{0}</a></td>
+                        <td><a class="Post_Link" href="/post/{9}" target="_blank">{1}</a></td>
+                        <td><a class="Page_Link" href="/page/{8}" target="_blank">{2}</a></td>
+                        <td>{3}</td>
+                        <td>{4}/{5}</td>
+                        <td>{6}</td>
+                    <tr/>
+                """.format(
+                    l_dt.strftime('%d/%m/%Y %H:%M'),
+                    l_type,
+                    l_page_name,
+                    l_fb_type + ('/{0}'.format(l_fb_status_type)
+                                 if l_fb_status_type is not None and len(l_fb_status_type) > 0 else ''),
+                    fmt_int_none(l_likes),
+                    fmt_int_none(l_shares),
+                    l_display_text,
+                    l_id,
+                    '{0}/{1}/{2}'.format(
+                        l_id_page,
+                        datetime.datetime.now().strftime('%Y.%m.%d'),
+                        (datetime.datetime.now() - datetime.timedelta(days=l_page_width)).strftime('%Y.%m.%d')
+                    ),
+                    '{0}/{1}#K{1}'.format(l_id_post, l_id) if l_id != l_id_post else l_id
+                )
+
+        l_cursor.close()
+        self.m_connectionPool.putconn(l_conn)
+
+        return """
+            <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
+            <head>
+                <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                <style>
+                    th, td {{
+                        padding-right: 1em;
+                    }}
+                    th {{
+                        font-weight: bold;
+                        font-family: sans-serif;
+                        text-align: left;
+                    }}
+                    td {{
+                        font-family: monospace;
+                    }}
+                    h1, h2 {{
+                        font-family: sans-serif;
+                    }}
+                    a {{
+                        text-decoration: none;
+                    }}
+                    a.FB_Link{{
+                        font-weight: bold;
+                        color: RoyalBlue;
+                    }}
+                    a.FB_Link:hover{{
+                        color: RoyalBlue;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.Post_Link{{
+                        font-weight: bold;
+                        color: SeaGreen;
+                    }}
+                    a.Post_Link:hover{{
+                        color: SeaGreen;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.User_Link{{
+                        font-weight: bold;
+                        color: IndianRed;
+                    }}
+                    a.User_Link:hover{{
+                        color: IndianRed;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.Page_Link{{
+                        font-weight: bold;
+                        color: Crimson;
+                    }}
+                    a.User_Link:hover{{
+                        color: Crimson;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                </style>
+            </head>
+            <body>
+                <h1>User: {0}</h1>
+                <table>
+                    <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Page</th>
+                        <th>FB Type</th>
+                        <th>Likes/Shares</th>
+                        <th>Text</th>
+                    <tr/>
+                        {1}
+                </table>
+            </body>
+            </html>
+        """.format(l_user_name, l_response)
