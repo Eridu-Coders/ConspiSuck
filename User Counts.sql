@@ -1,3 +1,19 @@
+drop table "TB_USER_UNIQUE";
+create table "TB_USER_UNIQUE" as
+select 
+	"ID"
+	, max("ST_NAME") "ST_NAME"
+	, min("DT_CRE") "DT_CRE"
+	, min("DT_MSG") "DT_MSG"
+	, min("ID_INTERNAL") "ID_INTERNAL"
+	, min("ST_USER_ID") "ST_USER_ID"
+	, min("ST_TYPE") "ST_TYPE"
+	, count(1) as "CHANGES_COUNT"
+from "TB_USER"
+group by "ID";
+ALTER TABLE public."TB_USER_UNIQUE" ADD PRIMARY KEY ("ID");
+CREATE UNIQUE INDEX "TB_USER_UNIQUE_id_internal" ON "TB_USER_UNIQUE" USING btree("ID_INTERNAL");
+
 drop table "TMP_UCOUNTS_1";
 create table "TMP_UCOUNTS_1" as
 select

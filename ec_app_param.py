@@ -112,12 +112,12 @@ class EcAppParamFacebook(LocalParam):
     #: max number of days a post will be updated after its creation
     gcm_days_depth = 14
     #: number of days after which the detailed liked list of a post will be fetched
-    gcm_likes_depth = 8
+    gcm_likes_depth = 4
     #: number of elements retrieved in one request (API param)
     gcm_limit = 100
     #: wait period after a request limit hit (in seconds)
     gcm_wait_fb = 60 * 60
-    #: number of requests after which the token must be renewed
+    #: number of requests after which the token must be renewed (no longer used because of long-duration tokens)
     gcm_token_lifespan = 2000
 
 

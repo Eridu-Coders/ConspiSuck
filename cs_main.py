@@ -177,7 +177,7 @@ class CsApp(EcAppCore):
         """
 
         # starting the background tasks thread (will start the bulk download threads)
-        #self.m_background.start()
+        self.m_background.start()
         self.m_logger.info('Background tasks thread started')
 
         # starting the generic app health check thread (as implemented in the parent's :any:`EcAppCore.run()`)
@@ -569,75 +569,79 @@ class CsApp(EcAppCore):
         l_cursor.close()
         self.m_connectionPool.putconn(l_conn)
         return """
-                <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
-                <head>
-                    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
-                    <style>
-                        th, td {{
-                            padding-right: 1em;
-                        }}
-                        th {{
-                            font-weight: bold;
-                            font-family: sans-serif;
-                            text-align: left;
-                        }}
-                        td {{
-                            font-family: monospace;
-                        }}
-                        h1, h2 {{
-                            font-family: sans-serif;
-                        }}
-                        a {{
-                            text-decoration: none;
-                        }}
-                        a.FB_Link{{
-                            font-weight: bold;
-                            color: RoyalBlue;
-                        }}
-                        a.FB_Link:hover{{
-                            color: RoyalBlue;
-                            font-style: italic;
-                            text-decoration: underline;
-                        }}
-                        a.Post_Link{{
-                            font-weight: bold;
-                            color: SeaGreen;
-                        }}
-                        a.Post_Link:hover{{
-                            color: SeaGreen;
-                            font-style: italic;
-                            text-decoration: underline;
-                        }}
-                        a.User_Link{{
-                            font-weight: bold;
-                            color: IndianRed;
-                        }}
-                        a.User_Link:hover{{
-                            color: IndianRed;
-                            font-style: italic;
-                            text-decoration: underline;
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <h1>Page: {0}</h1>
-                    <h2>Path: {1}</h1>
-                    <table>
-                        <tr>
-                            <th>Date</th>
-                            <th>FB Type</th>
-                            <th>From</th>
-                            <th>Likes</th>
-                            <th>Shares</th>
-                            <th>Comm.</th>
-                            <th>Media</th>
-                            <th>Text</th>
-                        <tr/>
-                        {2}
-                    </table>
-                </body>
-                </html>
-                """.format(l_page_name, p_request_handler.path, l_response)
+            <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
+            <head>
+                <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+                <style>
+                    th, td {{
+                        padding-right: 1em;
+                    }}
+                    th {{
+                        font-weight: bold;
+                        font-family: sans-serif;
+                        text-align: left;
+                    }}
+                    td {{
+                        font-family: monospace;
+                    }}
+                    h1, h2 {{
+                        font-family: sans-serif;
+                    }}
+                    a {{
+                        text-decoration: none;
+                    }}
+                    a.FB_Link{{
+                        font-weight: bold;
+                        color: RoyalBlue;
+                    }}
+                    a.FB_Link:hover{{
+                        color: RoyalBlue;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.Post_Link{{
+                        font-weight: bold;
+                        color: SeaGreen;
+                    }}
+                    a.Post_Link:hover{{
+                        color: SeaGreen;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                    a.Post_Link:visited{{
+                        color: DarkKhaki;
+                        font-weight: none;
+                    }}
+                    a.User_Link{{
+                        font-weight: bold;
+                        color: IndianRed;
+                    }}
+                    a.User_Link:hover{{
+                        color: IndianRed;
+                        font-style: italic;
+                        text-decoration: underline;
+                    }}
+                </style>
+            </head>
+            <body>
+                <h1>Page: {0}</h1>
+                <h2>Path: {1}</h1>
+                <table>
+                    <tr>
+                        <th>Date</th>
+                        <th>FB Type</th>
+                        <th>From</th>
+                        <th>Likes</th>
+                        <th>Shares</th>
+                        <th>Comm.</th>
+                        <th>Media</th>
+                        <th>Text</th>
+                    <tr/>
+                    {2}
+                </table>
+            </body>
+            </html>
+        """.format(l_page_name, p_request_handler.path, l_response)
 
     def one_post(self, p_request_handler):
         """
@@ -708,7 +712,7 @@ class CsApp(EcAppCore):
                             where not "F_FROM_PARENT"
                             group by "ID_OWNER"  
                         ) as "M" on "O"."ID" = "M"."ID_OWNER"
-                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                        left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
                         left outer join ( 
                             select "ID_POST", count(1) as "COMMENT_COUNT"
                             from "TB_OBJ" where "ST_TYPE" = 'Comm'
@@ -1057,27 +1061,50 @@ class CsApp(EcAppCore):
             l_cursor.execute(
                 """
                     select 
-                        "O"."ID",
-                        "O"."DT_CRE",
-                        "O"."TX_MESSAGE",
-                        "O"."N_LIKES",
-                        "M"."ST_FORMAT",
-                        "M"."TX_BASE64",
-                        "M"."TX_TEXT",
-                        "M"."TX_VOCABULARY",
-                        "M"."TX_MEDIA_SRC",
-                        "U"."ST_NAME",
-                        "O"."ID_USER"
+                        "O"."ID"
+                        ,"O"."DT_CRE"
+                        ,"O"."TX_MESSAGE"
+                        ,"O"."N_LIKES"
+                        ,"M"."ST_FORMAT"
+                        ,"M"."TX_BASE64"
+                        ,"M"."TX_TEXT"
+                        ,"M"."TX_VOCABULARY"
+                        ,"M"."TX_MEDIA_SRC"
+                        ,"U"."ST_NAME"
+                        ,"O"."ID_USER"
+                        ,"S"."LIKES_COUNT" 
+                        ,"S"."POSTS_COUNT" 
+                        ,"S"."COMMENTS_COUNT" 
+                        ,"S"."TOTAL_COUNT" 
+                        ,"S"."COUNT_PAGE" 
                     from 
                         "TB_OBJ" as "O"
                         left outer join "TB_MEDIA" as "M" on "O"."ID" = "M"."ID_OWNER"
-                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                        left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
+                        left outer join "TB_USER_STATS" as "S" on "O"."ID_USER" = "S"."ID"
                     where "O"."ID_FATHER" = %s and "O"."ST_TYPE"='Comm'
                     order by "O"."DT_CRE";
                 """, (p_parent_id,)
             )
 
-            for l_id, l_dt, l_msg, l_likes, l_fmt, l_b64, l_txt, l_voc, l_src, l_user_name, l_id_user in l_cursor:
+            for \
+                    l_id, \
+                    l_dt, \
+                    l_msg, \
+                    l_likes, \
+                    l_fmt, \
+                    l_b64, \
+                    l_txt, \
+                    l_voc, \
+                    l_src, \
+                    l_user_name, \
+                    l_id_user, \
+                    l_user_likes_count, \
+                    l_user_posts_count, \
+                    l_user_comments_count, \
+                    l_user_total_count, \
+                    l_user_pages_count \
+                            in l_cursor:
                 l_color = l_bkg_list[l_bkg_id % len(l_bkg_list)]
 
                 if l_b64 is not None and len(l_b64) > 0:
@@ -1111,6 +1138,14 @@ class CsApp(EcAppCore):
                     l_para_style = ''
                     l_img_fifo.append(0)
                     l_vars = ''
+
+                l_user_name = '' if l_user_name is None else l_user_name
+                l_user_name += ' {0}-[{1}/{2}/{3}]-{4}'.format(
+                    l_user_total_count if l_user_total_count is not None else 0,
+                    l_user_posts_count if l_user_posts_count is not None else 0,
+                    l_user_comments_count if l_user_comments_count is not None else 0,
+                    l_user_likes_count if l_user_likes_count is not None else 0,
+                    l_user_pages_count if l_user_pages_count is not None else 0)
 
                 l_html += """
                     <div{10} style="margin-left: {0}em;">
@@ -1183,114 +1218,124 @@ class CsApp(EcAppCore):
         try:
             l_cursor.execute(
                 """
-                select * from (
-                    select 
-                        "O"."ID",
-                        "O"."ID_POST",
-                        "O"."ID_PAGE",
-                        "O"."ST_TYPE",
-                        "O"."ST_FB_TYPE",
-                        "O"."ST_FB_STATUS_TYPE",
-                        "O"."DT_CRE",
-                        "O"."TX_NAME",
-                        "O"."TX_CAPTION", 
-                        "O"."TX_DESCRIPTION",
-                        "O"."TX_STORY",
-                        "O"."TX_MESSAGE",
-                        "O"."N_LIKES",
-                        "O"."N_SHARES",
-                        "M"."IMG_COUNT",
-                        "U"."ST_NAME",
-                        "P"."TX_NAME",
-                        "C"."COMMENT_COUNT",
-                        "N"."POST_COUNT"
-                    from 
-                        (
-                            select 
-                                "OL"."ID",
-                                "OL"."ID_POST",
-                                "OL"."ID_PAGE",
-                                'Like' as "ST_TYPE",
-                                "OL"."ST_FB_TYPE",
-                                "OL"."ST_FB_STATUS_TYPE",
-                                "OL"."DT_CRE",
-                                "OL"."TX_NAME",
-                                "OL"."TX_CAPTION", 
-                                "OL"."TX_DESCRIPTION",
-                                "OL"."TX_STORY",
-                                "OL"."TX_MESSAGE",
-                                "OL"."N_LIKES",
-                                "OL"."N_SHARES",
-                                "U"."ID" as "ID_USER"
-                            from 
-                                "TB_USER" "U" join "TB_LIKE" "L" on "L"."ID_USER_INTERNAL" = "U"."ID_INTERNAL"
-                                join "TB_OBJ" "OL" on "L"."ID_OBJ_INTERNAL" = "OL"."ID_INTERNAL"
-                        )as "O"
-                        join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
-                        left outer join (
-                            select "ID_OWNER", count(1) as "IMG_COUNT" 
-                            from "TB_MEDIA" 
-                            where not "F_FROM_PARENT"
-                            group by "ID_OWNER"  
-                        ) as "M" on "O"."ID" = "M"."ID_OWNER"
-                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
-                        left outer join ( 
-                            select "ID_POST", count(1) as "COMMENT_COUNT"
-                            from "TB_OBJ" where "ST_TYPE" = 'Comm'
-                            group by "ID_POST"
-                        ) as "C" on "O"."ID" = "C"."ID_POST"
-                        left outer join ( 
-                            select "ID_PAGE", count(1) as "POST_COUNT"
-                            from "TB_OBJ" 
-                            where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
-                            group by "ID_PAGE"
-                        ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
-                    where "O"."ID_USER" = %s
-                union all
-                    select 
-                        "O"."ID",
-                        "O"."ID_POST",
-                        "O"."ID_PAGE",
-                        "O"."ST_TYPE",
-                        "O"."ST_FB_TYPE",
-                        "O"."ST_FB_STATUS_TYPE",
-                        "O"."DT_CRE",
-                        "O"."TX_NAME",
-                        "O"."TX_CAPTION", 
-                        "O"."TX_DESCRIPTION",
-                        "O"."TX_STORY",
-                        "O"."TX_MESSAGE",
-                        "O"."N_LIKES",
-                        "O"."N_SHARES",
-                        "M"."IMG_COUNT",
-                        "U"."ST_NAME",
-                        "P"."TX_NAME",
-                        "C"."COMMENT_COUNT",
-                        "N"."POST_COUNT"
-                    from 
-                        "TB_OBJ" as "O"
-                        join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
-                        left outer join (
-                            select "ID_OWNER", count(1) as "IMG_COUNT" 
-                            from "TB_MEDIA" 
-                            where not "F_FROM_PARENT"
-                            group by "ID_OWNER"  
-                        ) as "M" on "O"."ID" = "M"."ID_OWNER"
-                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
-                        left outer join ( 
-                            select "ID_POST", count(1) as "COMMENT_COUNT"
-                            from "TB_OBJ" where "ST_TYPE" = 'Comm'
-                            group by "ID_POST"
-                        ) as "C" on "O"."ID" = "C"."ID_POST"
-                        left outer join ( 
-                            select "ID_PAGE", count(1) as "POST_COUNT"
-                            from "TB_OBJ" 
-                            where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
-                            group by "ID_PAGE"
-                        ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
-                    where "O"."ID_USER" = %s
-                ) as "A"
-                order by "DT_CRE"
+                    select "E".*
+                        ,"S"."LIKES_COUNT" 
+                        ,"S"."POSTS_COUNT" 
+                        ,"S"."COMMENTS_COUNT" 
+                        ,"S"."TOTAL_COUNT" 
+                        ,"S"."COUNT_PAGE" 
+                    from (
+                        select 
+                            "O"."ID",
+                            "O"."ID_POST",
+                            "O"."ID_PAGE",
+                            "O"."ST_TYPE",
+                            "O"."ST_FB_TYPE",
+                            "O"."ST_FB_STATUS_TYPE",
+                            "O"."DT_CRE",
+                            "O"."TX_NAME",
+                            "O"."TX_CAPTION", 
+                            "O"."TX_DESCRIPTION",
+                            "O"."TX_STORY",
+                            "O"."TX_MESSAGE",
+                            "O"."N_LIKES",
+                            "O"."N_SHARES",
+                            "M"."IMG_COUNT",
+                            "U"."ST_NAME",
+                            "U"."ID" as "ID_USER",
+                            "P"."TX_NAME",
+                            "C"."COMMENT_COUNT",
+                            "N"."POST_COUNT"
+                        from 
+                            (
+                                select 
+                                    "OL"."ID",
+                                    "OL"."ID_POST",
+                                    "OL"."ID_PAGE",
+                                    'Like' as "ST_TYPE",
+                                    "OL"."ST_FB_TYPE",
+                                    "OL"."ST_FB_STATUS_TYPE",
+                                    "OL"."DT_CRE",
+                                    "OL"."TX_NAME",
+                                    "OL"."TX_CAPTION", 
+                                    "OL"."TX_DESCRIPTION",
+                                    "OL"."TX_STORY",
+                                    "OL"."TX_MESSAGE",
+                                    "OL"."N_LIKES",
+                                    "OL"."N_SHARES",
+                                    "U"."ID" as "ID_USER"
+                                from 
+                                    "TB_USER_UNIQUE" "U" join "TB_LIKE" "L" on "L"."ID_USER_INTERNAL" = "U"."ID_INTERNAL"
+                                    join "TB_OBJ" "OL" on "L"."ID_OBJ_INTERNAL" = "OL"."ID_INTERNAL"
+                                    join "TB_USER_STATS" "S" on "U"."ID" = "S"."ID"
+                            )as "O"
+                            join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
+                            left outer join (
+                                select "ID_OWNER", count(1) as "IMG_COUNT" 
+                                from "TB_MEDIA" 
+                                where not "F_FROM_PARENT"
+                                group by "ID_OWNER"  
+                            ) as "M" on "O"."ID" = "M"."ID_OWNER"
+                            left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
+                            left outer join ( 
+                                select "ID_POST", count(1) as "COMMENT_COUNT"
+                                from "TB_OBJ" where "ST_TYPE" = 'Comm'
+                                group by "ID_POST"
+                            ) as "C" on "O"."ID" = "C"."ID_POST"
+                            left outer join ( 
+                                select "ID_PAGE", count(1) as "POST_COUNT"
+                                from "TB_OBJ" 
+                                where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
+                                group by "ID_PAGE"
+                            ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
+                        where "O"."ID_USER" = %s
+                    union all
+                        select 
+                            "O"."ID",
+                            "O"."ID_POST",
+                            "O"."ID_PAGE",
+                            "O"."ST_TYPE",
+                            "O"."ST_FB_TYPE",
+                            "O"."ST_FB_STATUS_TYPE",
+                            "O"."DT_CRE",
+                            "O"."TX_NAME",
+                            "O"."TX_CAPTION", 
+                            "O"."TX_DESCRIPTION",
+                            "O"."TX_STORY",
+                            "O"."TX_MESSAGE",
+                            "O"."N_LIKES",
+                            "O"."N_SHARES",
+                            "M"."IMG_COUNT",
+                            "U"."ST_NAME",
+                            "U"."ID" as "ID_USER",
+                            "P"."TX_NAME",
+                            "C"."COMMENT_COUNT",
+                            "N"."POST_COUNT"
+                        from 
+                            "TB_OBJ" as "O"
+                            join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
+                            left outer join (
+                                select "ID_OWNER", count(1) as "IMG_COUNT" 
+                                from "TB_MEDIA" 
+                                where not "F_FROM_PARENT"
+                                group by "ID_OWNER"  
+                            ) as "M" on "O"."ID" = "M"."ID_OWNER"
+                            left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
+                            left outer join ( 
+                                select "ID_POST", count(1) as "COMMENT_COUNT"
+                                from "TB_OBJ" where "ST_TYPE" = 'Comm'
+                                group by "ID_POST"
+                            ) as "C" on "O"."ID" = "C"."ID_POST"
+                            left outer join ( 
+                                select "ID_PAGE", count(1) as "POST_COUNT"
+                                from "TB_OBJ" 
+                                where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
+                                group by "ID_PAGE"
+                            ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
+                        where "O"."ID_USER" = %s
+                    ) as "E" 
+                    left outer join "TB_USER_STATS" as "S" on "S"."ID" = "E"."ID_USER"
+                    order by "E"."DT_CRE" desc;
                 """, (l_user_id, l_user_id)
             )
         except Exception as e:
@@ -1298,6 +1343,12 @@ class CsApp(EcAppCore):
             raise
 
         l_user_name = ''
+        l_id_user = ''
+        l_user_likes_count = 0
+        l_user_posts_count = 0
+        l_user_comments_count = 0
+        l_user_total_count = 0
+        l_user_pages_count = 0
         for l_id,\
             l_id_post,\
             l_id_page, \
@@ -1314,9 +1365,15 @@ class CsApp(EcAppCore):
             l_shares, \
             l_img_count, \
             l_user_name, \
+            l_id_user, \
             l_page_name, \
             l_comment_count,\
-            l_page_post_count \
+            l_page_post_count,\
+            l_user_likes_count, \
+            l_user_posts_count, \
+            l_user_comments_count, \
+            l_user_total_count, \
+            l_user_pages_count \
                 in l_cursor:
 
             l_total = len(l_name) + len(l_caption) + len(l_desc) + len(l_story) + 2 * len(l_message)
@@ -1382,6 +1439,7 @@ class CsApp(EcAppCore):
                     }}
                     h1, h2 {{
                         font-family: sans-serif;
+                        font-size: large;
                     }}
                     a {{
                         text-decoration: none;
@@ -1429,7 +1487,8 @@ class CsApp(EcAppCore):
                 </style>
             </head>
             <body>
-                <h1>User: {0}</h1>
+                <h1>User: <a class="FB_Link" href="https://www.facebook.com/{0}" target="_blank">
+                    <span style="font-family: monospace;">{1}</span></a></h1>
                 <table>
                     <tr>
                         <th>Date</th>
@@ -1439,8 +1498,16 @@ class CsApp(EcAppCore):
                         <th>Likes/Shares</th>
                         <th>Text</th>
                     <tr/>
-                        {1}
+                        {2}
                 </table>
             </body>
             </html>
-        """.format(l_user_name, l_response)
+        """.format(
+            l_id_user,
+            '{0} {1}-[{2}/{3}/{4}]-{5}'.format(l_user_name,
+                                               l_user_total_count if l_user_total_count is not None else 0,
+                                               l_user_posts_count if l_user_posts_count is not None else 0,
+                                               l_user_comments_count if l_user_comments_count is not None else 0,
+                                               l_user_likes_count if l_user_likes_count is not None else 0,
+                                               l_user_pages_count if l_user_pages_count is not None else 0),
+            l_response)
