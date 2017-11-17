@@ -177,7 +177,7 @@ class CsApp(EcAppCore):
         """
 
         # starting the background tasks thread (will start the bulk download threads)
-        self.m_background.start()
+        #self.m_background.start()
         self.m_logger.info('Background tasks thread started')
 
         # starting the generic app health check thread (as implemented in the parent's :any:`EcAppCore.run()`)
@@ -1183,6 +1183,70 @@ class CsApp(EcAppCore):
         try:
             l_cursor.execute(
                 """
+                select * from (
+                    select 
+                        "O"."ID",
+                        "O"."ID_POST",
+                        "O"."ID_PAGE",
+                        "O"."ST_TYPE",
+                        "O"."ST_FB_TYPE",
+                        "O"."ST_FB_STATUS_TYPE",
+                        "O"."DT_CRE",
+                        "O"."TX_NAME",
+                        "O"."TX_CAPTION", 
+                        "O"."TX_DESCRIPTION",
+                        "O"."TX_STORY",
+                        "O"."TX_MESSAGE",
+                        "O"."N_LIKES",
+                        "O"."N_SHARES",
+                        "M"."IMG_COUNT",
+                        "U"."ST_NAME",
+                        "P"."TX_NAME",
+                        "C"."COMMENT_COUNT",
+                        "N"."POST_COUNT"
+                    from 
+                        (
+                            select 
+                                "OL"."ID",
+                                "OL"."ID_POST",
+                                "OL"."ID_PAGE",
+                                'Like' as "ST_TYPE",
+                                "OL"."ST_FB_TYPE",
+                                "OL"."ST_FB_STATUS_TYPE",
+                                "OL"."DT_CRE",
+                                "OL"."TX_NAME",
+                                "OL"."TX_CAPTION", 
+                                "OL"."TX_DESCRIPTION",
+                                "OL"."TX_STORY",
+                                "OL"."TX_MESSAGE",
+                                "OL"."N_LIKES",
+                                "OL"."N_SHARES",
+                                "U"."ID" as "ID_USER"
+                            from 
+                                "TB_USER" "U" join "TB_LIKE" "L" on "L"."ID_USER_INTERNAL" = "U"."ID_INTERNAL"
+                                join "TB_OBJ" "OL" on "L"."ID_OBJ_INTERNAL" = "OL"."ID_INTERNAL"
+                        )as "O"
+                        join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
+                        left outer join (
+                            select "ID_OWNER", count(1) as "IMG_COUNT" 
+                            from "TB_MEDIA" 
+                            where not "F_FROM_PARENT"
+                            group by "ID_OWNER"  
+                        ) as "M" on "O"."ID" = "M"."ID_OWNER"
+                        left outer join "TB_USER" as "U" on "O"."ID_USER" = "U"."ID"
+                        left outer join ( 
+                            select "ID_POST", count(1) as "COMMENT_COUNT"
+                            from "TB_OBJ" where "ST_TYPE" = 'Comm'
+                            group by "ID_POST"
+                        ) as "C" on "O"."ID" = "C"."ID_POST"
+                        left outer join ( 
+                            select "ID_PAGE", count(1) as "POST_COUNT"
+                            from "TB_OBJ" 
+                            where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
+                            group by "ID_PAGE"
+                        ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
+                    where "O"."ID_USER" = %s
+                union all
                     select 
                         "O"."ID",
                         "O"."ID_POST",
@@ -1225,8 +1289,9 @@ class CsApp(EcAppCore):
                             group by "ID_PAGE"
                         ) as "N" on "O"."ID_PAGE" = "N"."ID_PAGE"
                     where "O"."ID_USER" = %s
-                    order by "O"."DT_CRE" desc;
-                """, (l_user_id,)
+                ) as "A"
+                order by "DT_CRE"
+                """, (l_user_id, l_user_id)
             )
         except Exception as e:
             self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
@@ -1271,12 +1336,12 @@ class CsApp(EcAppCore):
 
             l_response += """
                     <tr>
-                        <td><a class="FB_Link" href="https://www.facebook.com/{7}" target="_blank">{0}</a></td>
-                        <td><a class="Post_Link" href="/post/{9}" target="_blank">{1}</a></td>
-                        <td><a class="Page_Link" href="/page/{8}" target="_blank">{2}</a></td>
+                        <td><a class="FB_Link" href="https://www.facebook.com/{6}" target="_blank">{0}</a></td>
+                        <td><a class="Post_Link" href="/post/{8}" target="_blank">{1}</a></td>
+                        <td><a class="Page_Link" href="/page/{7}" target="_blank">{2}</a></td>
                         <td>{3}</td>
-                        <td>{4}/{5}</td>
-                        <td>{6}</td>
+                        <td>{4}</td>
+                        <td>{5}</td>
                     <tr/>
                 """.format(
                     l_dt.strftime('%d/%m/%Y %H:%M'),
@@ -1284,8 +1349,8 @@ class CsApp(EcAppCore):
                     l_page_name,
                     l_fb_type + ('/{0}'.format(l_fb_status_type)
                                  if l_fb_status_type is not None and len(l_fb_status_type) > 0 else ''),
-                    fmt_int_none(l_likes),
-                    fmt_int_none(l_shares),
+                    '{0}/{1}'.format(fmt_int_none(l_likes), fmt_int_none(l_shares))
+                        if l_fb_type != 'Comment' else fmt_int_none(l_likes),
                     l_display_text,
                     l_id,
                     '{0}/{1}/{2}'.format(
@@ -1293,7 +1358,7 @@ class CsApp(EcAppCore):
                         datetime.datetime.now().strftime('%Y.%m.%d'),
                         (datetime.datetime.now() - datetime.timedelta(days=l_page_width)).strftime('%Y.%m.%d')
                     ),
-                    '{0}/{1}#K{1}'.format(l_id_post, l_id) if l_id != l_id_post else l_id
+                    '{0}/{1}#K{1}'.format(l_id_post, l_id) if l_fb_type == 'Comment' else l_id
                 )
 
         l_cursor.close()
@@ -1339,6 +1404,10 @@ class CsApp(EcAppCore):
                         font-style: italic;
                         text-decoration: underline;
                     }}
+                    a.Post_Link:visited{{
+                        color: DarkKhaki;
+                        font-weight: none;
+                    }}
                     a.User_Link{{
                         font-weight: bold;
                         color: IndianRed;
@@ -1352,7 +1421,7 @@ class CsApp(EcAppCore):
                         font-weight: bold;
                         color: Crimson;
                     }}
-                    a.User_Link:hover{{
+                    a.Page_Link:hover{{
                         color: Crimson;
                         font-style: italic;
                         text-decoration: underline;
