@@ -190,7 +190,7 @@ class EcLogger(logging.Logger):
 
                 # this test is located here and not in the CSV formatter so that it does not get to be performed
                 # needlessly for every debug message
-                if p_record.levelno >= logging.WARNING:
+                if LocalParam.gcm_warningsToMail and p_record.levelno >= logging.WARNING:
                     # send mail
                     EcMailer.send_mail(
                         '{0}-{1}[{2}]/{3}'.format(

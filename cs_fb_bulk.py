@@ -234,7 +234,7 @@ class BulkDownloader:
 
         # self.get_pages()
         self.get_posts()
-        time.sleep(60 * 60 * 3)
+        time.sleep(60 * 60 * 10)
 
         self.m_logger.info('End bulk_download()')
 
@@ -962,6 +962,36 @@ class BulkDownloader:
         """
         self.m_logger.info('Start repeat_posts_update()')
         while self.m_threads_proceed:
+            l_conn = self.m_pool.getconn('BulkDownloader.repeat_posts_update()')
+            l_cursor = l_conn.cursor()
+
+            try:
+                l_cursor.execute("""
+                    select count(1) as "COUNT"
+                    from "TB_OBJ"
+                    where
+                        "ST_TYPE" = 'Post'
+                        and DATE_PART('day', now()::date - "DT_CRE") <= %s
+                        and (
+                            "DT_LAST_UPDATE" is null
+                            or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
+                        )
+                """, (EcAppParam.gcm_days_depth,))
+
+                l_count = -1
+                for l_count, in l_cursor:
+                    pass
+
+                self.m_logger.info('PRGMTR Posts to be updated: {0}'.format(l_count))
+            except Exception as e:
+                self.m_logger.critical('repeat_posts_update() Unknown Exception: {0}/{1}'.format(
+                    repr(e), l_cursor.query))
+                raise BulkDownloaderException('repeat_posts_update() Unknown Exception: {0}'.format(repr(e)))
+
+            # close DB access handles when finished
+            l_cursor.close()
+            self.m_pool.putconn(l_conn)
+
             self.update_posts()
             time.sleep(1)
 
@@ -1100,6 +1130,33 @@ class BulkDownloader:
         """
         self.m_logger.info('Start repeat_get_likes_details()')
         while self.m_threads_proceed:
+            l_conn = self.m_pool.getconn('BulkDownloader.repeat_get_likes_details()')
+            l_cursor = l_conn.cursor()
+
+            try:
+                l_cursor.execute("""
+                    select count(1) as "COUNT"
+                    from "TB_OBJ"
+                    where
+                        "ST_TYPE" != 'Page'
+                        AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                        AND "F_LIKE_DETAIL" is null;
+                """, (EcAppParam.gcm_likes_depth,))
+
+                l_count = -1
+                for l_count, in l_cursor:
+                    pass
+
+                self.m_logger.info('PRGMTR Posts ready for likes download: {0}'.format(l_count))
+            except Exception as e:
+                self.m_logger.critical('repeat_get_likes_details() Unknown Exception: {0}/{1}'.format(
+                    repr(e), l_cursor.query))
+                raise BulkDownloaderException('repeat_get_likes_details() Unknown Exception: {0}'.format(repr(e)))
+
+            # close DB access handles when finished
+            l_cursor.close()
+            self.m_pool.putconn(l_conn)
+
             self.get_likes_detail()
             time.sleep(1)
 
@@ -1124,13 +1181,14 @@ class BulkDownloader:
             l_cursor.execute("""
                 SELECT
                     count(1) AS "LCOUNT"
-                FROM
-                    "TB_OBJ"
-                WHERE
-                    "ST_TYPE" != 'Page'
-                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
-                    AND "F_LIKE_DETAIL" is null
-                LIMIT 100;
+                FROM (
+                    select * from "TB_OBJ"
+                    WHERE
+                        "ST_TYPE" != 'Page'
+                        AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                        AND "F_LIKE_DETAIL" is null
+                    LIMIT 100
+                ) as "A";
             """, (EcAppParam.gcm_likes_depth,))
 
             for l_count, in l_cursor:
