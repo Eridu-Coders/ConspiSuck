@@ -2513,6 +2513,17 @@ class BulkDownloader:
         self.m_logger.debug('End update_object()')
         return l_stored
 
+    @staticmethod
+    def cut_max(s, p_max_len):
+        l_cut_padding = '[...]'
+
+        if s is None or len(s) == 0:
+            return ''
+        elif len(s) < p_max_len - len(l_cut_padding):
+            return s
+        else:
+            return s[:int(p_max_len) - len(l_cut_padding) -1] + l_cut_padding
+
     def store_user(self, p_id, p_name, p_date, p_padding):
         """
         DB Storage of a new user. If user already in the BD, traps the integrity violation error and returns `False`.
@@ -2543,7 +2554,7 @@ class BulkDownloader:
                 VALUES( %s, %s, %s, %s )
             """, (
                 p_id,
-                p_name,
+                BulkDownloader.cut_max(p_name, 250),
                 datetime.datetime.now(),
                 l_date
             ))
