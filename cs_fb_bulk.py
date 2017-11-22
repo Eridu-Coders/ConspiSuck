@@ -6,6 +6,7 @@ from PIL import ImageEnhance, ImageFilter
 import json
 import base64
 import socket
+import multiprocessing
 from tesserocr import PyTessBaseAPI, RIL
 
 from cs_fb_connect import *
@@ -39,21 +40,35 @@ class BulkDownloader:
         order by "P"."TX_NAME", "O"."ST_TYPE" desc;
 
     """
-    def __init__(self, p_pool, p_long_token, p_long_token_expiry, p_background_task):
+    def __init__(
+            self,
+            p_long_token,
+            p_long_token_expiry,
+            p_likes_process_count,
+            p_ocr_process_count,
+            p_gat_pages,
+            p_background_task):
+
         #: Local copy of the FB long-duration access token.
         self.m_long_token = p_long_token
 
         #: Local copy of the FB long-duration access token expiry date
         self.m_long_token_expiry = p_long_token_expiry
 
+        #: process count for likes download
+        self.m_likes_process_count = p_likes_process_count
+
+        #: process count for image ocr
+        self.m_ocr_process_count = p_ocr_process_count
+
+        #: flag to control execution of :any:`get_pages()`
+        self.m_gat_pages = p_gat_pages
+
         #: Local copy of the background task class instance to allow calling its methods.
         self.m_background_task = p_background_task
 
-        #: Connection pool
-        self.m_pool = p_pool
-
         #: Class-specific logger
-        self.m_logger = logging.getLogger('BulkDownloader')
+        self.m_logger = None
 
         #: Number of times an object storage operation has been attempted
         self.m_objectStoreAttempts = 0
@@ -76,14 +91,14 @@ class BulkDownloader:
         #: Posts update Thread
         self.m_posts_update_thread = None
 
-        #: Likes details download Thread
-        self.m_likes_details_thread = None
-
         #: Image fetching Thread
         self.m_image_fetch_thread = None
 
-        #: OCR Thread
-        self.m_ocr_thread = None
+        #: Likes details download Processes
+        self.m_likes_details_process = []
+
+        #: OCR Processes
+        self.m_ocr_process = []
 
         #: Boolean variable controlling the threads. When `False`, all threads stop.
         self.m_threads_proceed = True
@@ -151,9 +166,40 @@ class BulkDownloader:
             'ꝡ': 'vy',
         }
 
+    def start_processes(self):
+        """
+        Launch the process based tasks: OCR & likes download.
+
+        :return: Nothing.
+        """
+        # likes details download processes
+        l_likes_lock = multiprocessing.Lock()
+        for l_process_number in range(self.m_likes_process_count):
+            p = multiprocessing.Process(target=self.repeat_get_likes_details, args=(l_likes_lock,))
+            p.name = 'L{0}'.format(l_process_number)
+            self.m_likes_details_process.append(p)
+            p.start()
+
+        # self.m_logger.info('Likes details process(es) launched')
+
+        # OCR process
+        if EcAppParam.gcm_ocr_thread:
+            l_ocr_lock = multiprocessing.Lock()
+            for l_process_number in range(self.m_ocr_process_count):
+                p = multiprocessing.Process(target=self.repeat_ocr_image, args=(l_ocr_lock,))
+                p.name = 'O{0}'.format(l_process_number)
+                self.m_ocr_process.append(p)
+                p.start()
+
+            # self.m_logger.info('OCR process(es) launched')
+
+    def full_init(self):
+        # Local logger
+        self.m_logger = logging.getLogger('BulkDownloader')
+
     def start_threads(self):
         """
-        Thread Launching.
+        Threads and processes Launch.
 
         :return: Nothing
         """
@@ -164,13 +210,6 @@ class BulkDownloader:
         self.m_posts_update_thread.start()
         self.m_logger.info('Posts update thread launched')
 
-        # likes details download thread
-        self.m_likes_details_thread = Thread(target=self.repeat_get_likes_details)
-        # One-letter name for the likes details download thread
-        self.m_likes_details_thread.name = 'L'
-        self.m_likes_details_thread.start()
-        self.m_logger.info('Likes details thread launched')
-
         # Image fetching thread
         self.m_image_fetch_thread = Thread(target=self.repeat_fetch_images)
         # One-letter name for the Image fetching thread
@@ -178,48 +217,19 @@ class BulkDownloader:
         self.m_image_fetch_thread.start()
         self.m_logger.info('Image fetch thread launched')
 
-        # OCR Thread
-        if EcAppParam.gcm_ocr_thread:
-            self.m_logger.info('starting Image ocr thread ....')
-            self.m_ocr_thread = Thread(target=self.repeat_ocr_image)
-            # One-letter name for the OCR thread
-            self.m_ocr_thread.name = 'O'
-            self.m_ocr_thread.start()
-            self.m_logger.info('Image OCR thread started')
-
-    def stop_threads(self):
+    def new_process_init(self):
         """
-        Stops all threads.
+        Makes the necessary adjustments to function in a new process:
 
-        :return: Nothing.
+        * Mailer init.
+        * Connection pool init.
+        * Instantiation of local logger.
+
+        :return:
         """
+        GlobalStart.basic_env_start()
 
-        # Positioning this flag will stop all threads (hopefully).
-        self.m_threads_proceed = False
-
-        # stopping image thread (10 seconds timeout)
-        self.m_image_fetch_thread.join(10.0)
-        if self.m_image_fetch_thread.is_alive():
-            self.m_logger.critical('Could not stop image fetch thread ....')
-            exit(0)
-
-        # stopping post update thread (10 seconds timeout)
-        self.m_posts_update_thread.join(10.0)
-        if self.m_posts_update_thread.is_alive():
-            self.m_logger.critical('Could not stop post update fetch thread ....')
-            exit(0)
-
-        # stopping likes detail download thread (10 seconds timeout)
-        self.m_likes_details_thread.join(10.0)
-        if self.m_likes_details_thread.is_alive():
-            self.m_logger.critical('Could not stop likes detail download fetch thread ....')
-            exit(0)
-
-        # stopping OCR thread (5 minutes timeout)
-        self.m_ocr_thread.join(60.0 * 5)
-        if self.m_ocr_thread.is_alive():
-            self.m_logger.critical('Could not stop ocr thread ....')
-            exit(0)
+        self.full_init()
 
     def bulk_download(self):
         """
@@ -229,14 +239,16 @@ class BulkDownloader:
         """
         self.m_logger.info('Start bulk_download()')
 
-        # self.m_logger.info('Getting FB token')
-        # self.m_browserDriver.get_fb_token()
+        while True:
+            self.m_logger.info('top of bulk_download() main loop')
+            self.start_threads()
 
-        # self.get_pages()
-        self.get_posts()
-        time.sleep(60 * 60 * 10)
+            if self.m_gat_pages:
+                self.get_pages()
+            self.get_posts()
 
-        self.m_logger.info('End bulk_download()')
+            self.m_posts_update_thread.join()
+            self.m_image_fetch_thread.join()
 
     def get_pages(self):
         """
@@ -366,7 +378,7 @@ class BulkDownloader:
         self.m_logger.info('Start get_posts()')
 
         # get a connection from the pool and a cursor from the pool
-        l_conn = self.m_pool.getconn('BulkDownloader.get_posts()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_posts()')
         l_cursor = l_conn.cursor()
 
         # select all pages from TB_PAGES
@@ -391,7 +403,7 @@ class BulkDownloader:
 
         # release DB objects once finished
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
         self.m_logger.info('End get_posts()')
 
     def get_posts_from_page(self, p_id):
@@ -961,8 +973,9 @@ class BulkDownloader:
         :return: Nothing
         """
         self.m_logger.info('Start repeat_posts_update()')
-        while self.m_threads_proceed:
-            l_conn = self.m_pool.getconn('BulkDownloader.repeat_posts_update()')
+        l_finished = False
+        while self.m_threads_proceed and not l_finished:
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.repeat_posts_update()')
             l_cursor = l_conn.cursor()
 
             try:
@@ -983,6 +996,7 @@ class BulkDownloader:
                     pass
 
                 self.m_logger.info('PRGMTR Posts to be updated: {0}'.format(l_count))
+                l_finished = l_count == 0
             except Exception as e:
                 self.m_logger.critical('repeat_posts_update() Unknown Exception: {0}/{1}'.format(
                     repr(e), l_cursor.query))
@@ -990,10 +1004,14 @@ class BulkDownloader:
 
             # close DB access handles when finished
             l_cursor.close()
-            self.m_pool.putconn(l_conn)
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            self.update_posts()
-            time.sleep(1)
+            if not l_finished:
+                try:
+                    self.update_posts()
+                except Exception as e:
+                    self.m_logger.warning(repr(e))
+                time.sleep(1)
 
         self.m_logger.info('End repeat_posts_update()')
 
@@ -1011,7 +1029,7 @@ class BulkDownloader:
         self.m_logger.info('Start update_posts()')
 
         # get DB connection and cursor
-        l_conn = self.m_pool.getconn('BulkDownloader.update_posts()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_posts()')
         l_cursor = l_conn.cursor()
 
         try:
@@ -1116,93 +1134,89 @@ class BulkDownloader:
 
         # close DB access handles when finished
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.info('End update_posts()')
 
-    def repeat_get_likes_details(self):
+    def repeat_get_likes_details(self, p_lock):
         """
         Calls :any:`BulkDownloader.get_likes_detail()` repeatedly, with a 1 second delay between calls. Meant to be
         the likes detail download thread initiated in :any:`BulkDownloader.start_threads()`.
         The loop stops (and the thread terminates) when :any:`m_threads_proceed` is set to `False`
 
+        This function is executed in a separate process and must therefore re-initialize the connection pool
+        (:any:`new_process_init()`)
+
+        :param p_lock: Lock protecting `F_LOCK` in `TB_OBJ`
         :return: Nothing
         """
+        # Env set-up after process start (logger & mailer)
+        self.new_process_init()
+
         self.m_logger.info('Start repeat_get_likes_details()')
-        while self.m_threads_proceed:
-            l_conn = self.m_pool.getconn('BulkDownloader.repeat_get_likes_details()')
+
+        while True:
+            # get the total count of objects that remains to be processed
+
+            # get DB connection and cursor
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Read')
             l_cursor = l_conn.cursor()
 
+            l_count = 0
             try:
                 l_cursor.execute("""
-                    select count(1) as "COUNT"
-                    from "TB_OBJ"
-                    where
+                    SELECT
+                        count(1)
+                    FROM
+                        "TB_OBJ"
+                    WHERE
                         "ST_TYPE" != 'Page'
                         AND DATE_PART('day', now()::date - "DT_CRE") >= %s
-                        AND "F_LIKE_DETAIL" is null;
+                        AND NOT "F_LOCKED"
+                        AND "F_LIKE_DETAIL" is null
                 """, (EcAppParam.gcm_likes_depth,))
 
-                l_count = -1
                 for l_count, in l_cursor:
                     pass
 
-                self.m_logger.info('PRGMTR Posts ready for likes download: {0}'.format(l_count))
+                self.m_logger.info('PRGMTR posts ready for likes download: {0}'.format(l_count))
             except Exception as e:
-                self.m_logger.critical('repeat_get_likes_details() Unknown Exception: {0}/{1}'.format(
-                    repr(e), l_cursor.query))
-                raise BulkDownloaderException('repeat_get_likes_details() Unknown Exception: {0}'.format(repr(e)))
+                l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
+                self.m_logger.critical(l_msg)
+                raise BulkDownloaderException(l_msg)
 
-            # close DB access handles when finished
+            # release DB handles when finished
             l_cursor.close()
-            self.m_pool.putconn(l_conn)
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            self.get_likes_detail()
+            if l_count > 0:
+                try:
+                    self.get_likes_detail(p_lock)
+                except Exception as e:
+                    self.m_logger.warning(repr(e))
+
             time.sleep(1)
 
-        self.m_logger.info('End repeat_get_likes_details()')
-
-    def get_likes_detail(self):
+    def get_likes_detail(self, p_lock):
         """
         Get the likes details of sufficiently old posts and comments (100 at a time). "Sufficiently old" means,
         older than :any:`gcm_likes_depth` days.
 
+        :param p_lock: Lock protecting `F_LOCK` in `TB_OBJ`
         :return: Nothing
         """
         self.m_logger.info('Start get_likes_detail()')
 
+        # CRITICAL SECTION ENTRY --------------------------------------------------------------------------------------
+        p_lock.acquire()
+
         # get DB connection and cursor
-        l_conn = self.m_pool.getconn('BulkDownloader.get_likes_detail()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Read')
         l_cursor = l_conn.cursor()
 
-        # get the total count of objects that will be processed in this run (100 or less)
-        l_total_count = 0
-        try:
-            l_cursor.execute("""
-                SELECT
-                    count(1) AS "LCOUNT"
-                FROM (
-                    select * from "TB_OBJ"
-                    WHERE
-                        "ST_TYPE" != 'Page'
-                        AND DATE_PART('day', now()::date - "DT_CRE") >= %s
-                        AND "F_LIKE_DETAIL" is null
-                    LIMIT 100
-                ) as "A";
-            """, (EcAppParam.gcm_likes_depth,))
-
-            for l_count, in l_cursor:
-                l_total_count = l_count
-        except Exception as e:
-            self.m_logger.critical('Likes detail download (count) Unknown Exception: {0}/{1}'.format(
-                repr(e), l_cursor.query))
-            raise BulkDownloaderException('Likes detail download (count) Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        l_cursor = l_conn.cursor()
-
-        # all non page objects older than gcm_likes_depth days and not already processed
-        l_obj_count = 0
+        # get the list of objects that will be processed in this run (500 or less)
+        # l_total_count = 0
+        l_obj_list = []
         try:
             l_cursor.execute("""
                 SELECT
@@ -1212,96 +1226,128 @@ class BulkDownloader:
                 WHERE
                     "ST_TYPE" != 'Page'
                     AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                    AND NOT "F_LOCKED"
                     AND "F_LIKE_DETAIL" is null
-                LIMIT 100;
+                LIMIT 100
             """, (EcAppParam.gcm_likes_depth,))
 
-            # loop through the list of objects obtained from the DB
-            for l_id, l_internal_id, l_dt_msg in l_cursor:
-                # l_id: FB ID
-                # l_internal_id: DB ID
+            for l_record in l_cursor:
+                l_obj_list.append(l_record)
 
-                # thread abort
-                if not self.m_threads_proceed:
-                    break
-
-                self.m_logger.info('{0}/{1} {2} ----->'.format(l_obj_count, l_total_count, l_id))
-
-                # FB API request to get the list of likes for the given object
-                l_request = 'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}'.format(
-                    EcAppParam.gcm_api_version,
-                    l_id,
-                    EcAppParam.gcm_limit,
-                    self.m_long_token)
-
-                # perform request
-                l_response = self.perform_request(l_request)
-                # decode request's JSON response
-                l_response_data = json.loads(l_response)
-
-                l_like_count = 0
-                # loop through all likes returned by the request
-                while True:
-                    # double loop to handle FB API paging mechanism
-                    for l_liker in l_response_data['data']:
-                        # ID of the liker, if any (otherwise skip)
-                        try:
-                            l_liker_id = l_liker['id']
-                        except KeyError:
-                            self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker))
-                            continue
-
-                        # Name of the liker, if any (otherwise skip)
-                        try:
-                            l_liker_name = l_liker['name']
-                        except KeyError:
-                            self.m_logger.warning('No name found in Liker: {0}'.format(l_liker))
-                            continue
-
-                        # Parent object date in string form for database insertion
-                        l_dt_msg_str = l_dt_msg.strftime('%Y-%m-%dT%H:%M:%S+000')
-                        # store the liker in the DB
-                        self.store_user(l_liker_id, l_liker_name, l_dt_msg_str, '')
-
-                        # get the DB ID of the liker
-                        l_liker_internal_id = self.get_user_internal_id(l_liker_id)
-
-                        # create a like link in the DB btw the liker and the object
-                        self.create_like_link(l_liker_internal_id, l_internal_id, l_dt_msg_str)
-
-                        # debug display
-                        if EcAppParam.gcm_verboseModeOn:
-                            self.m_logger.debug('   {0}/{1} [{2} | {3}] {4}'.format(
-                                l_obj_count, l_total_count, l_liker_id, l_liker_internal_id, l_liker_name))
-
-                        l_like_count += 1
-                    # end of loop: for l_liker in l_response_data['data']:
-
-                    # FB API paging mechanics
-                    if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
-                        self.m_logger.info('   *** {0}/{1} Getting next likes block ...'.format(
-                            l_obj_count, l_total_count))
-                        l_request = l_response_data['paging']['next']
-                        l_response = self.perform_request(l_request)
-
-                        l_response_data = json.loads(l_response)
-                    else:
-                        break
-                # end of loop: while True:
-
-                # mark the object to indicated likes download complete
-                self.set_like_flag(l_id)
-
-                self.m_logger.info('   {0}/{1} --> {2} Likes:'.format(l_obj_count, l_total_count, l_like_count))
-                l_obj_count += 1
-            # end loop: for l_id, l_internal_id, l_dt_msg in l_cursor:
+            # get the total count of objects that will be processed in this run (500 or less)
+            l_total_count = len(l_obj_list)
         except Exception as e:
-            self.m_logger.critical('Likes detail download Exception: {0}/{1}'.format(repr(e), l_cursor.query))
-            raise BulkDownloaderException('Likes detail download Exception: {0}'.format(repr(e)))
+            l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
+            self.m_logger.critical(l_msg)
+            raise BulkDownloaderException(l_msg)
 
         # release DB handles when finished
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        # get DB connection and cursor
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Write')
+        l_cursor_write = l_conn_write.cursor()
+
+        try:
+            l_cursor_write.execute("""
+                UPDATE
+                    "TB_OBJ"
+                SET
+                    "F_LOCKED" = TRUE
+                WHERE
+                    "ID_INTERNAL" in (%s)
+            """, (','.join([str(l_internal_id) for _, l_internal_id, _ in l_obj_list]),))
+        except Exception as e:
+            l_msg = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(repr(e), l_cursor.query)
+            self.m_logger.critical(l_msg)
+            raise BulkDownloaderException(l_msg)
+
+        # release DB handles when finished
+        l_cursor_write.close()
+        EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
+        p_lock.release()
+
+        # all non page objects older than gcm_likes_depth days and not already processed
+        l_obj_count = 0
+
+        # loop through the list of objects obtained from the DB
+        for l_id, l_internal_id, l_dt_msg in l_obj_list:
+            # l_id: FB ID
+            # l_internal_id: DB ID
+
+            self.m_logger.info('{0}/{1} {2} ----->'.format(l_obj_count, l_total_count, l_id))
+
+            # FB API request to get the list of likes for the given object
+            l_request = 'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}'.format(
+                EcAppParam.gcm_api_version,
+                l_id,
+                EcAppParam.gcm_limit,
+                self.m_long_token)
+
+            # perform request
+            l_response = self.perform_request(l_request)
+            # decode request's JSON response
+            l_response_data = json.loads(l_response)
+
+            l_like_count = 0
+            # loop through all likes returned by the request
+            while True:
+                # double loop to handle FB API paging mechanism
+                for l_liker in l_response_data['data']:
+                    # ID of the liker, if any (otherwise skip)
+                    try:
+                        l_liker_id = l_liker['id']
+                    except KeyError:
+                        self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker))
+                        continue
+
+                    # Name of the liker, if any (otherwise skip)
+                    try:
+                        l_liker_name = l_liker['name']
+                    except KeyError:
+                        self.m_logger.warning('No name found in Liker: {0}'.format(l_liker))
+                        continue
+
+                    # Parent object date in string form for database insertion
+                    l_dt_msg_str = l_dt_msg.strftime('%Y-%m-%dT%H:%M:%S+000')
+                    # store the liker in the DB
+                    self.store_user(l_liker_id, l_liker_name, l_dt_msg_str, '')
+
+                    # get the DB ID of the liker
+                    l_liker_internal_id = self.get_user_internal_id(l_liker_id)
+
+                    # create a like link in the DB btw the liker and the object
+                    self.create_like_link(l_liker_internal_id, l_internal_id, l_dt_msg_str)
+
+                    # debug display
+                    if EcAppParam.gcm_verboseModeOn:
+                        self.m_logger.debug('   {0}/{1} [{2} | {3}] {4}'.format(
+                            l_obj_count, l_total_count, l_liker_id, l_liker_internal_id, l_liker_name))
+
+                    l_like_count += 1
+                # end of loop: for l_liker in l_response_data['data']:
+
+                # FB API paging mechanics
+                if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
+                    self.m_logger.info('   *** {0}/{1} Getting next likes block ...'.format(
+                        l_obj_count, l_total_count))
+                    l_request = l_response_data['paging']['next']
+                    l_response = self.perform_request(l_request)
+
+                    l_response_data = json.loads(l_response)
+                else:
+                    break
+            # end of loop: while True:
+
+            # mark the object to indicated likes download complete
+            self.set_like_flag(l_id)
+
+            self.m_logger.info('   {0}/{1} --> {2} Likes:'.format(l_obj_count, l_total_count, l_like_count))
+            l_obj_count += 1
+        # end loop: for l_id, l_internal_id, l_dt_msg in l_cursor:
 
         self.m_logger.info('End get_likes_detail()')
 
@@ -1315,7 +1361,11 @@ class BulkDownloader:
         """
         self.m_logger.info('Start repeat_fetch_images()')
         while self.m_threads_proceed:
-            self.fetch_images()
+            try:
+                self.fetch_images()
+            except Exception as e:
+                self.m_logger.warning(repr(e))
+
             time.sleep(1)
 
         self.m_logger.info('End repeat_fetch_images()')
@@ -1468,7 +1518,7 @@ class BulkDownloader:
         self.m_logger.info('Start fetch_images()')
 
         # get DB connection and cursor
-        l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
 
         # load 100 `TB_MEDIA` which have an image link but have not been loaded or had an error while loading
@@ -1481,7 +1531,9 @@ class BulkDownloader:
                 limit 100;
             """)
         except Exception as e:
-            self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
+            l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+            self.m_logger.warning(l_msg)
+            raise BulkDownloaderException(l_msg)
 
         # load through the batch of records
         for l_src, l_width, l_height, l_internal, l_picture, l_full_picture in l_cursor:
@@ -1505,7 +1557,7 @@ class BulkDownloader:
                 l_fmt_fp, l_image_txt_fp, l_error_fp = self.get_image(l_full_picture, l_internal)
 
             # get new DB connection and cursor to perform the write operation
-            l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
+            l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
             l_cursor_write = l_conn_write.cursor()
 
             # stores the results (which may be an error) into `TB_MEDIA`
@@ -1527,37 +1579,51 @@ class BulkDownloader:
                       l_image_txt_pic, l_image_txt_fp, l_fmt, l_fmt_pic, l_fmt_fp, l_internal))
                 l_conn_write.commit()
             except Exception as e:
-                self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
                 l_conn_write.rollback()
+                l_msg = 'Error updating TB_MEDIA: {0}'.format(repr(e))
+                self.m_logger.warning(l_msg)
+                raise BulkDownloaderException(l_msg)
 
             self.m_logger.info('Fetched image for internal ID: {0}'.format(l_internal))
 
             # releases write operation DB connection and cursor
             l_cursor_write.close()
-            self.m_pool.putconn(l_conn_write)
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
         # end loop: for l_src, l_width, l_height, l_internal in l_cursor:
 
         # releases outer DB cursor and connection
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.info('End fetch_images()')
 
-    def repeat_ocr_image(self):
+    def repeat_ocr_image(self, p_lock):
         """
         Calls :any:`BulkDownloader.ocr_images()` repeatedly, with a 30 second delay between calls. Meant to be 
         the image OCR thread initiated in :any:`BulkDownloader.bulk_download()`.
-        
+
+        This function is executed in a separate process and must therefore re-initialize the connection pool
+        (:any:`new_process_init()`)
+
+        :param p_lock: Lock protecting `F_LOCK` in `TB_MEDIA`
         :return: Nothing
         """
-        self.m_logger.info('Start repeat_ocr_image()')
-        while self.m_threads_proceed:
-            self.ocr_images()
-            time.sleep(30)
+        # restart the connection pool
+        self.new_process_init()
 
-    def ocr_images(self):
+        self.m_logger.info('Start repeat_ocr_image()')
+
+        while self.m_threads_proceed:
+            try:
+                self.ocr_images(p_lock)
+            except Exception as e:
+                self.m_logger.warning(repr(e))
+
+            time.sleep(1)
+
+    def ocr_images(self, p_lock):
         """
-        Takes a block of (normally 100) `TB_MEDIA` records with downloaded images and attempts OCR. Stores the results
+        Takes a block of (normally 500) `TB_MEDIA` records with downloaded images and attempts OCR. Stores the results
         in appropriate fields in `TB_MEDIA`.
 
         The OCR process generates several versions of the image through various filters (contrast, brightness,
@@ -1567,6 +1633,7 @@ class BulkDownloader:
 
         .. https://github.com/johnlinp/meme-ocr: http://example.com/
 
+        :param p_lock: Lock protecting `F_LOCK` in `TB_MEDIA`
         :return: Nothing
         """
         self.m_logger.info('Start ocr_images()')
@@ -1574,7 +1641,7 @@ class BulkDownloader:
         # SQL Offset (why ?)
         # l_offset = 0
         # image batch max size
-        l_max_img_count = 100
+        l_max_img_count = 500
 
         # threshold for cutoff filters
         l_threshold = 180
@@ -1597,8 +1664,11 @@ class BulkDownloader:
         # controls the display of extra debug messages
         l_debug_messages = False
 
-        # get 100 images (if available)
-        l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
+        # CRITICAL SECTION ENTRY --------------------------------------------------------------------------------------
+        p_lock.acquire()
+
+        # get 500 images (if available)
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
@@ -1617,18 +1687,48 @@ class BulkDownloader:
                         where not "F_FROM_PARENT"
                         group by "ID_OWNER"
                     ) as "N" on "M"."ID_OWNER" = "N"."ID_OWNER"
-                where "M"."F_LOADED" and not "M"."F_ERROR" and not "M"."F_OCR"
+                where "M"."F_LOADED" and not "M"."F_ERROR" and not "M"."F_OCR" and not "M"."F_LOCK"
                 limit %s;
             """, (l_max_img_count, ))
         except Exception as e:
-            self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
+            l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+            self.m_logger.warning(l_msg)
+            raise BulkDownloaderException(l_msg)
+
+        l_media_list = []
+        for l_record in l_cursor:
+            l_media_list.append(l_record)
+
+        # DB handles released after use
+        l_cursor.close()
+        EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
+        l_cursor_write = l_conn_write.cursor()
+        try:
+            l_cursor_write.execute("""
+                update "TB_MEDIA"
+                set "F_LOCK" = true
+                where "ID_MEDIA_INTERNAL" in (%s);
+                    """, (','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list]),))
+        except Exception as e:
+            l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+            self.m_logger.warning(l_msg)
+            raise BulkDownloaderException(l_msg)
+
+        # DB handles released after use
+        l_cursor_write.close()
+        EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
+        p_lock.release()
 
         # image index within the batch
         l_img_count = 0
         # score by suffix: number of times each suffix was in the selection bracket
         l_suf_score = dict()
         # loop through the 100 images
-        for l_internal, l_media_src, l_full_picture, l_base64, l_base64_fp, l_att_count in l_cursor:
+        for l_internal, l_media_src, l_full_picture, l_base64, l_base64_fp, l_att_count in l_media_list:
             # thread abort
             if not self.m_threads_proceed:
                 break
@@ -1646,23 +1746,27 @@ class BulkDownloader:
 
             # internal function mark the current record in 'TB_MEDIA' as done
             def mark_as_ocred():
-                l_conn_w = self.m_pool.getconn('BulkDownloader.fetch_images() UPDATE')
+                l_conn_w = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images() UPDATE')
                 l_cursor_w = l_conn_w.cursor()
 
                 self.m_logger.info('OCR complete on [{0}]'.format(l_internal))
                 try:
                     l_cursor_w.execute("""
                         update "TB_MEDIA"
-                        set "F_OCR" = true
+                        set 
+                            "F_OCR" = true,
+                            "F_LOCK" = false
                         where "ID_MEDIA_INTERNAL" = %s
                     """, (l_internal, ))
                     l_conn_w.commit()
                 except Exception as e1:
                     l_conn_w.rollback()
-                    self.m_logger.warning('Error updating TB_MEDIA: {0}/{1}'.format(repr(e1), l_cursor_w.query))
+                    l_msg0 = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e1), l_cursor_w.query)
+                    self.m_logger.warning(l_msg0)
+                    raise BulkDownloaderException(l_msg0)
 
                 l_cursor_w.close()
-                self.m_pool.putconn(l_conn_w)
+                EcConnectionPool.get_global_pool().putconn(l_conn_w)
 
             # special case: there are no images ---> mark record as OCRed
             if (l_base64 is None or len(l_base64) == 0) and (l_base64 is None or len(l_base64) == 0):
@@ -2042,7 +2146,7 @@ class BulkDownloader:
                     print('VOCABULARY:', ' '.join(l_vocabulary))
                     print('[{0}] VOCABULARY:'.format(l_img_count), ' '.join(l_vocabulary), file=sys.stderr)
 
-                l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images() UPDATE')
+                l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images() UPDATE')
                 l_cursor_write = l_conn_write.cursor()
 
                 self.m_logger.info('OCR complete on [{0}]: {1}'.format(l_internal, l_text))
@@ -2051,6 +2155,7 @@ class BulkDownloader:
                         update "TB_MEDIA"
                         set 
                             "F_OCR" = true
+                            , "F_LOCK" = false
                             , "TX_TEXT" = %s
                             , "TX_VOCABULARY" = %s
                         where "ID_MEDIA_INTERNAL" = %s
@@ -2058,10 +2163,12 @@ class BulkDownloader:
                     l_conn_write.commit()
                 except Exception as e:
                     l_conn_write.rollback()
-                    self.m_logger.warning('Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query))
+                    l_msg = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
+                    self.m_logger.warning(l_msg)
+                    raise BulkDownloaderException(l_msg)
 
                 l_cursor_write.close()
-                self.m_pool.putconn(l_conn_write)
+                EcConnectionPool.get_global_pool().putconn(l_conn_write)
             else:
                 # nothing to store, just mark the ocr as done
                 mark_as_ocred()
@@ -2070,9 +2177,6 @@ class BulkDownloader:
             if l_img_count == l_max_img_count:
                 break
         # end for l_internal, l_base64 in l_cursor:
-
-        l_cursor.close()
-        self.m_pool.putconn(l_conn)
 
         # final results
         if l_debug_messages:
@@ -2370,7 +2474,7 @@ class BulkDownloader:
         else:
             l_date_modification = datetime.datetime.strptime(l_date_modification, '%Y-%m-%d %H:%M:%S')
 
-        l_conn = self.m_pool.getconn('BulkDownloader.store_object()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.store_object()')
         l_cursor = l_conn.cursor()
 
         try:
@@ -2451,7 +2555,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.info(
             '{0}Object counts: {1} attempts / {2} stored / {3} posts retrieved / {4} comments retrieved'.format(
@@ -2481,7 +2585,7 @@ class BulkDownloader:
         self.m_logger.debug('Start update_object()')
         l_stored = False
 
-        l_conn = self.m_pool.getconn('BulkDownloader.update_object()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_object()')
         l_cursor = l_conn.cursor()
 
         try:
@@ -2508,7 +2612,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End update_object()')
         return l_stored
@@ -2522,7 +2626,7 @@ class BulkDownloader:
         elif len(s) < p_max_len - len(l_cut_padding):
             return s
         else:
-            return s[:int(p_max_len) - len(l_cut_padding) -1] + l_cut_padding
+            return s[:int(p_max_len) - len(l_cut_padding) - 1] + l_cut_padding
 
     def store_user(self, p_id, p_name, p_date, p_padding):
         """
@@ -2544,7 +2648,7 @@ class BulkDownloader:
         else:
             l_date = datetime.datetime.strptime(l_date, '%Y-%m-%d %H:%M:%S')
 
-        l_conn = self.m_pool.getconn('BulkDownloader.store_user()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.store_user()')
         l_cursor = l_conn.cursor()
 
         l_inserted = False
@@ -2569,7 +2673,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End store_user()')
         return l_inserted
@@ -2582,7 +2686,7 @@ class BulkDownloader:
         :return: Internal ID
         """
         self.m_logger.debug('Start get_user_internal_id()')
-        l_conn = self.m_pool.getconn('BulkDownloader.get_user_internal_id()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_user_internal_id()')
         l_cursor = l_conn.cursor()
 
         l_ret_id = None
@@ -2601,7 +2705,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End get_user_internal_id()')
         return l_ret_id
@@ -2620,7 +2724,7 @@ class BulkDownloader:
         l_date = re.sub('T', ' ', p_date)
         l_date = re.sub(r'\+\d+$', '', l_date)
 
-        l_conn = self.m_pool.getconn('BulkDownloader.create_like_link()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.create_like_link()')
         l_cursor = l_conn.cursor()
 
         l_inserted = False
@@ -2640,7 +2744,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End create_like_link()')
         return l_inserted
@@ -2653,13 +2757,15 @@ class BulkDownloader:
         :return: Nothing 
         """
         self.m_logger.debug('Start set_like_flag()')
-        l_conn = self.m_pool.getconn('BulkDownloader.set_like_flag()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.set_like_flag()')
         l_cursor = l_conn.cursor()
 
         try:
             l_cursor.execute("""
                 update "TB_OBJ"
-                set "F_LIKE_DETAIL" = 'X'
+                set 
+                    "F_LIKE_DETAIL" = 'X',
+                    "F_LOCKED" = FALSE
                 where "ID" = %s
             """, (p_id,))
             l_conn.commit()
@@ -2669,7 +2775,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End set_like_flag()')
 
@@ -2696,7 +2802,7 @@ class BulkDownloader:
         """
         self.m_logger.debug('Start store_media()')
 
-        l_conn = self.m_pool.getconn('BulkDownloader.store_user()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.store_user()')
         l_cursor = l_conn.cursor()
 
         try:
@@ -2730,7 +2836,7 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_MEDIA Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-        self.m_pool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('Start store_media()')
 
@@ -2810,8 +2916,8 @@ if __name__ == "__main__":
     l_driver.m_user_api = l_phantomId0
     l_driver.m_pass_api = l_phantomPwd0
 
-    l_downloader = BulkDownloader(l_driver, l_pool, l_phantomId0, l_phantomPwd0)
-    l_downloader.bulk_download()
+    # l_downloader = BulkDownloader(l_driver, l_pool, l_phantomId0, l_phantomPwd0)
+    # l_downloader.bulk_download()
 
     if EcAppParam.gcm_headless:
         l_driver.close()

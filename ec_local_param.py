@@ -38,6 +38,8 @@ class LocalParamLogging:
     gcm_verboseModeOn = True
     #: If True then all messages are sent to TB_EC_DEBUG
     gcm_debugToDB = True
+    #: If True then all messages are sent to the csv file (name in :any:`gcm_logFile`)
+    gcm_debugToCSV = False
     #: If True then all messages above WARNING level are sent by mail
     gcm_warningsToMail = False
     #: If True then do not load browscap

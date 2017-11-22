@@ -14,6 +14,7 @@ __author__ = 'Pavan Mahalingam'
 # TODO: Warning message when approaching token end of life
 # TODO: Move database to other disk
 
+
 class CsBackgroundTask(threading.Thread):
     """
     Thread class performing the continuous batch download of Facebook stories. The thread does not start
@@ -21,25 +22,61 @@ class CsBackgroundTask(threading.Thread):
     tasks thread.
     """
 
-    def __init__(self, p_pool):
+    def __init__(self, p_likes_process_count, p_ocr_process_count, p_gat_pages):
         """
         Sets up class variable and launches the thread.
 
-        :param p_pool: :any:`EcConnectionPool` passed from the main :any:`CsApp` application class.
+        :param p_likes_process_count: Process count for likes download
+        :param p_ocr_process_count: Process count for image ocr
+        :param p_gat_pages: flag to control whether :any:'CsBulkDownloader.get_pages()' is executed or not
         """
         super().__init__(daemon=True)
 
         #: Local logger
-        self.m_logger = logging.getLogger('CsBackgroundTask')
+        self.m_logger = None
 
         #: Bulk Downloader
         self.m_bulk = None
 
-        #: Connection pool
-        self.m_pool = p_pool
-
         #: Thread letter ID (member inherited from :any:`threading.Thread`)
         self.name = 'B'
+
+        #: process count for likes download
+        self.m_likes_process_count = p_likes_process_count
+
+        #: process count for image ocr
+        self.m_ocr_process_count = p_ocr_process_count
+
+        #: flag to avoid launching OCR processes
+        self.m_gat_pages = p_gat_pages
+
+        # Spell Checker should not complain ... Grrrr
+        self.m_long_token = "EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU" \
+                       "49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD"
+
+        self.m_long_token_expiry = datetime.datetime.strptime('21/12/2017', '%d/%m/%Y')
+
+    def full_init(self):
+        # Local logger
+        self.m_logger = logging.getLogger('CsBackgroundTask')
+
+        self.m_bulk.full_init()
+
+    def start_processes(self):
+        # instantiate the bulk downloader class
+        try:
+            self.m_bulk = BulkDownloader(
+                self.m_long_token,
+                self.m_long_token_expiry,
+                self.m_likes_process_count,
+                self.m_ocr_process_count,
+                self.m_gat_pages,
+                self)
+        except Exception as e:
+            EcMailer.send_mail('Unable to instantiate bulk downloader', repr(e))
+            raise
+
+        self.m_bulk.start_processes()
 
     @staticmethod
     def get_own_ip():
@@ -91,11 +128,6 @@ class CsBackgroundTask(threading.Thread):
         :return: Nothing
         """
 
-        # Spell Checker should not complain ... Grrrr
-        l_long_token = "EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU" \
-                       "49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD"
-        l_long_token_expiry = datetime.datetime.strptime('21/12/2017', '%d/%m/%Y')
-
         # Make sure internet is accessible and wait otherwise
         l_sleep_time = 30
         # maximum wait = 3 hours
@@ -115,20 +147,11 @@ class CsBackgroundTask(threading.Thread):
             # wait for 30 seconds
             time.sleep(l_sleep_time)
 
-        # instantiate the bulk downloader class
-        try:
-            self.m_bulk = BulkDownloader(self.m_pool, l_long_token, l_long_token_expiry, self)
-        except Exception as e:
-            self.m_logger.warning('Unable to instantiate bulk downloader: ' + repr(e))
-            raise
-
         self.m_logger.info('*** FB Sucking set-up complete')
 
         # Launch one bulk download procedure
         try:
-            self.m_bulk.start_threads()
             self.m_bulk.bulk_download()
-            self.m_bulk.stop_threads()
         except Exception as e:
             self.m_logger.warning('Serious exception - Raising: ' + repr(e))
             raise
@@ -146,17 +169,27 @@ class CsApp(EcAppCore):
       from the base :any:`EcAppCore` class.
     """
 
-    def __init__(self):
+    def __init__(self, p_likes_process_count, p_ocr_process_count, p_gat_pages):
         super().__init__()
 
         #: local logger
-        self.m_logger = logging.getLogger('CsApp')
+        self.m_logger = None
 
         if EcAppParam.gcm_startGathering:
             #: Background task performing continuous download of FB stories
-            self.m_background = CsBackgroundTask(self.m_connectionPool)
+            self.m_background = CsBackgroundTask(p_likes_process_count, p_ocr_process_count, p_gat_pages)
         else:
             self.m_background = None
+
+    def full_init(self):
+        # local logger
+        self.m_logger = logging.getLogger('CsApp')
+
+        # local logger for the background task
+        self.m_background.full_init()
+
+    def start_processes(self):
+        self.m_background.start_processes()
 
     def start_threads(self):
         """
@@ -219,7 +252,7 @@ class CsApp(EcAppCore):
 
         :return: The list of sessions HTML.
         """
-        l_conn = self.m_connectionPool.getconn('sessionList()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('dash()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
@@ -350,7 +383,7 @@ class CsApp(EcAppCore):
             raise
 
         l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
         return """
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
             <head>
@@ -444,7 +477,7 @@ class CsApp(EcAppCore):
                     </html>
                 """.format(p_request_handler.path)
 
-        l_conn = self.m_connectionPool.getconn('oneSession()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('one_page()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
@@ -567,7 +600,7 @@ class CsApp(EcAppCore):
             raise
 
         l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
         return """
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
             <head>
@@ -682,7 +715,7 @@ class CsApp(EcAppCore):
         self.m_logger.info('l_post_id: {0}'.format(l_post_id))
         self.m_logger.info('l_comment_id: {0}'.format(l_comment_id))
 
-        l_conn = self.m_connectionPool.getconn('oneStory()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('one_post()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute(
@@ -760,7 +793,7 @@ class CsApp(EcAppCore):
                 # ('<img src="data:image/{1};base64,{0}" ><br/>'.format(l_base_64_pic, l_fmt)
                 #    if l_base_64_pic is not None else '') + \
 
-                l_conn_media = self.m_connectionPool.getconn('oneStory() - Media')
+                l_conn_media = EcConnectionPool.get_global_pool().getconn('one_post() - Media')
                 l_cursor_media = l_conn.cursor()
                 try:
                     l_cursor_media.execute(
@@ -873,7 +906,7 @@ class CsApp(EcAppCore):
                             l_vocabulary)
 
                 l_cursor_media.close()
-                self.m_connectionPool.putconn(l_conn_media)
+                EcConnectionPool.get_global_pool().putconn(l_conn_media)
 
                 l_response += """
                     <tr>
@@ -960,7 +993,7 @@ class CsApp(EcAppCore):
             raise
 
         l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         # Comments
         l_comments, _, _ = self.get_comments(l_post_id, l_comment_id, 1)
@@ -1040,7 +1073,8 @@ class CsApp(EcAppCore):
             </html>
         """.format(l_response, l_comments)
 
-    def get_comments(self, p_parent_id, p_comment_anchor_id, p_depth, p_bkg=0, p_img_fifo=collections.deque(20*[0], 20)):
+    def get_comments(
+            self, p_parent_id, p_comment_anchor_id, p_depth, p_bkg=0, p_img_fifo=collections.deque(20*[0], 20)):
         """
 
         :param p_parent_id:
@@ -1054,7 +1088,7 @@ class CsApp(EcAppCore):
         l_bkg_id = p_bkg
         l_img_fifo = p_img_fifo
 
-        l_conn = self.m_connectionPool.getconn('get_comments()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('get_comments()')
         l_cursor = l_conn.cursor()
         l_html = ''
         try:
@@ -1183,7 +1217,7 @@ class CsApp(EcAppCore):
             raise
 
         l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         return l_html, l_bkg_id, l_img_fifo
 
@@ -1213,7 +1247,7 @@ class CsApp(EcAppCore):
         l_user_id = re.sub('/user/', '', p_request_handler.path)
         self.m_logger.info('l_post_id: {0}'.format(l_user_id))
 
-        l_conn = self.m_connectionPool.getconn('oneStory()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('one_user()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute(
@@ -1419,7 +1453,7 @@ class CsApp(EcAppCore):
                 )
 
         l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
 
         return """
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >

@@ -8,6 +8,8 @@ from cs_main import *
 import random
 import sys
 import locale
+import argparse
+import multiprocessing
 from socketserver import ThreadingMixIn
 
 
@@ -23,8 +25,8 @@ class StartApp:
     This is a simple wrapper around the function starting the application. Everything is static.
     """
 
-    @classmethod
-    def start_conspi_suck(cls):
+    @staticmethod
+    def start_conspi_suck():
         """
         The actual entry point, called from ``if __name__ == "__main__":``. Does the following:
 
@@ -55,40 +57,46 @@ class StartApp:
         # random generator init
         random.seed()
 
-        # mailer init
-        EcMailer.init_mailer()
+        # list of arguments
+        l_parser = argparse.ArgumentParser(description='Launch ConspiSuck server and threads/processes')
+        l_parser.add_argument('--likes-proc', type=int, help='Process count for likes download', default=1)
+        l_parser.add_argument('--ocr-proc', type=int, help='Process count for image ocr', default=1)
+        l_parser.add_argument('--get-pages', help='Execute get_pages() (default: false)', action='store_true')
 
-        # test connection to PostgresQL and wait if unavailable
-        while True:
-            try:
-                l_connect = psycopg2.connect(
-                    host=EcAppParam.gcm_dbServer,
-                    database=EcAppParam.gcm_dbDatabase,
-                    user=EcAppParam.gcm_dbUser,
-                    password=EcAppParam.gcm_dbPassword
-                )
+        # dummy class to receive the parsed args
+        class C:
+            def __init__(self):
+                self.likes_proc = 1
+                self.ocr_proc = 1
+                self.get_pages = False
 
-                l_connect.close()
-                break
-            except psycopg2.Error as e:
-                EcLogger.cm_logger.debug('WAITING: No PostgreSQL yet ... : ' + repr(e))
-                EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e))
-                time.sleep(1)
-                continue
-
-        # logging system init
-        try:
-            EcLogger.log_init()
-        except Exception as e:
-            EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
-            sys.exit(0)
+        # do the argument parse
+        c = C()
+        l_parser.parse_args()
+        l_parser.parse_args(namespace=c)
 
         try:
             # instantiate the app (and the connection pool within it)
-            l_app = CsApp()
+            l_app = CsApp(c.likes_proc, c.ocr_proc, c.get_pages)
         except Exception as e:
-            EcLogger.cm_logger.critical('App class failed to instantiate. Error: {0}'.format(repr(e)))
+            EcMailer.send_mail('App class failed to instantiate.', repr(e))
             sys.exit(0)
+
+        # select the correct process launch method to avoid SSL issues in Psycopg2
+        multiprocessing.set_start_method('spawn')
+
+        # give one-letter name to current process
+        multiprocessing.current_process().name = 'M'
+
+        l_app.start_processes()
+
+        # Set-up mailer & EcLogger
+        GlobalStart.basic_env_start()
+        l_app.full_init()
+
+        # test the logging system by displaying the parameters
+        EcLogger.cm_logger.info('c.likes_proc : {0}'.format(c.likes_proc))
+        EcLogger.cm_logger.info('c.ocr_proc   : {0}'.format(c.ocr_proc))
 
         # initializes request handler class
         EcRequestHandler.init_class(l_app)

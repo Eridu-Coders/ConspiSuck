@@ -18,9 +18,8 @@ class EcAppCore(threading.Thread):
         """
         Perform the following housekeeping tasks:
 
-        * Start the connection pool.
-        * Test the DB connection by storing a startup message in `TB_EC_MSG`.
-        * Start the health check thread.
+        * Tests the DB connection by storing a startup message in `TB_EC_MSG`.
+        * Starts the health check thread.
 
         **NB** The health check thread is actually no longer started here but placed under the
         responsibility of the implementation app. The reason fo this is that the app may need to be instantiated
@@ -35,18 +34,8 @@ class EcAppCore(threading.Thread):
         #: logger
         self.m_logger = logging.getLogger('AppCore')
 
-        # connection pool init
-        try:
-            #: The pool
-            self.m_connectionPool = EcConnectionPool.get_new()
-        except Exception as e:
-            self.m_logger.warning('Unable to start Connection pool: {0}-{1}'.format(
-                type(e).__name__, repr(e)
-            ))
-            raise
-
         # Add a record to TB_EC_MSG, thus testing the db connection
-        l_conn = self.m_connectionPool.getconn('DB Connection test in EcAppCore.__init__()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('DB Connection test in EcAppCore.__init__()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
@@ -88,7 +77,7 @@ class EcAppCore(threading.Thread):
             raise
 
         l_cursor.close()
-        self.m_connectionPool.putconn(l_conn)
+        EcConnectionPool.get_global_pool().putconn(l_conn)
         self.m_logger.info('Successful TB_EC_MSG insert - The DB appears to be working')
 
         #: health check counter. Number of calls to :any:`EcConnectionPool.getconn`
@@ -99,14 +88,6 @@ class EcAppCore(threading.Thread):
 
         # Thread start placed under the responsibility of the implementation app (30/06/2017)
         # self.start()
-
-    def get_connection_pool(self):
-        """
-        Connection pool access.
-
-        :return: :any:`m_connectionPool`
-        """
-        return self.m_connectionPool
 
     def get_response_post(self, p_request_handler, p_post_data):
         """
@@ -247,5 +228,5 @@ class EcAppCore(threading.Thread):
             # output a full connection pool usage report
             l_f_log_name = re.sub('\.csv', '.all_connections', EcAppParam.gcm_logFile)
             l_f_log = open(l_f_log_name, 'w')
-            l_f_log.write(self.m_connectionPool.connection_report())
+            l_f_log.write(EcConnectionPool.get_global_pool().connection_report())
             l_f_log.close()

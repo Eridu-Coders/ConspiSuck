@@ -14,9 +14,44 @@ import psycopg2.pool
 import psycopg2
 import psycopg2.extensions
 import threading
+import multiprocessing
+import sys
 
 __author__ = 'Pavan Mahalingam'
 
+
+class GlobalStart:
+    @staticmethod
+    def basic_env_start():
+        # mailer init
+        EcMailer.init_mailer()
+
+        # test connection to PostgresQL and wait if unavailable
+        while True:
+            try:
+                l_connect = psycopg2.connect(
+                    host=EcAppParam.gcm_dbServer,
+                    database=EcAppParam.gcm_dbDatabase,
+                    user=EcAppParam.gcm_dbUser,
+                    password=EcAppParam.gcm_dbPassword
+                )
+
+                l_connect.close()
+                break
+            except psycopg2.Error as e:
+                EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e))
+                time.sleep(1)
+                continue
+
+        # initializes global connection pool
+        EcConnectionPool.init_global_pool()
+
+        # logging system init (has to be after connection pool init because it uses it)
+        try:
+            EcLogger.log_init()
+        except Exception as e:
+            EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
+            sys.exit(0)
 
 # -------------------------------------- Logging Set-up ----------------------------------------------------------------
 class EcLogger(logging.Logger):
@@ -26,11 +61,6 @@ class EcLogger(logging.Logger):
 
     #: static variable containing the root logger.
     cm_logger = None
-
-    #: connection pool for logging purposes.
-    cm_pool = None
-    # the logging system uses a separate connection pool and it is an ordinary psycopg pool because there is
-    # no concern that connections might get lost
 
     @classmethod
     def root_logger(cls):
@@ -62,7 +92,7 @@ class EcLogger(logging.Logger):
             self.setLevel(logging.DEBUG)
 
     @classmethod
-    def log_init(cls):
+    def log_init(cls, p_purge=True):
         """
         Initializes the logging system by creating the root logger + 2 subclasses of :py:class:`logging.Formatter`
         to handle:
@@ -73,44 +103,29 @@ class EcLogger(logging.Logger):
         Only INFO level messages and above are displayed on screen (if :any:`gcm_verboseModeOn` is set).
         DEBUG level messages, if any, are sent to the CSV file.
         """
-        # initializes the logging connection pool
-        try:
-            cls.cm_pool = psycopg2.pool.ThreadedConnectionPool(
-                EcAppParam.gcm_connectionPoolMinCount,
-                EcAppParam.gcm_connectionPoolMaxCount,
-                host=EcAppParam.gcm_dbServer,
-                database=EcAppParam.gcm_dbDatabase,
-                user=EcAppParam.gcm_dbUser,
-                password=EcAppParam.gcm_dbPassword,
-                connection_factory=EcConnection
-            )
-        except psycopg2.Error as e:
-            EcMailer.send_mail(
-                'Failed to create logging connection pool: {0}'.format(repr(e)),
-                'Sent from EcLogger.logInit\n' + EcConnectionPool.get_psycopg2_error_block(e)
-            )
-            raise
 
         # purge TB_EC_DEBUG
-        l_conn = EcLogger.cm_pool.getconn()
-        l_cursor = l_conn.cursor()
-        try:
-            l_cursor.execute('delete from "TB_EC_DEBUG"')
-            l_conn.commit()
-        except psycopg2.Error as e:
-            EcMailer.send_mail(
-                'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
-                'Sent from EcLogger.logInit\n' + EcConnectionPool.get_psycopg2_error_block(e)
-            )
-            raise
+        if p_purge:
+            l_conn = EcConnectionPool.get_global_pool().getconn('EcLogger.log_init()')
+            l_cursor = l_conn.cursor()
+            try:
+                l_cursor.execute('delete from "TB_EC_DEBUG"')
+                l_conn.commit()
+            except psycopg2.Error as e:
+                EcMailer.send_mail(
+                    'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
+                    'Sent from EcLogger.logInit\n' + EcConnectionPool.get_psycopg2_error_block(e)
+                )
+                raise
 
-        l_cursor.close()
-        EcLogger.cm_pool.putconn(l_conn)
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         # Creates the column headers for the CSV log file
-        l_f_log = open(EcAppParam.gcm_logFile, 'w')
-        l_f_log.write('LOGGER_NAME;THREAD;TIME;LEVEL;MODULE;FILE;FUNCTION;LINE;MESSAGE\n')
-        l_f_log.close()
+        if LocalParam.gcm_debugToCSV:
+            l_f_log = open(EcAppParam.gcm_logFile, 'w')
+            l_f_log.write('LOGGER_NAME;PROCESS;THREAD;TIME;LEVEL;MODULE;FILE;FUNCTION;LINE;MESSAGE\n')
+            l_f_log.close()
 
         # registers the EcLogger class with the logging system
         logging.setLoggerClass(EcLogger)
@@ -122,10 +137,51 @@ class EcLogger(logging.Logger):
         l_handler_console = logging.StreamHandler()
         l_handler_file = logging.FileHandler(EcAppParam.gcm_logFile, mode='a')
 
+        def db_output(p_record):
+            l_thread_name = threading.current_thread().name
+            l_process_name = multiprocessing.current_process().name
+
+            l_conn1 = EcConnectionPool.get_global_pool().getconn('EcCsvFormatter.format()')
+            l_cursor1 = l_conn1.cursor()
+            try:
+                l_cursor1.execute("""
+                        insert into "TB_EC_DEBUG"(
+                            "ST_NAME",
+                            "ST_LEVEL",
+                            "ST_MODULE",
+                            "ST_FILENAME",
+                            "ST_FUNCTION",
+                            "N_LINE",
+                            "TX_MSG", 
+                            "ST_THREAD",
+                            "ST_PROCESS"
+                        )
+                        values(%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    """, (
+                    p_record.name,
+                    p_record.levelname,
+                    p_record.module,
+                    p_record.pathname,
+                    p_record.funcName,
+                    p_record.lineno,
+                    re.sub('\s+', ' ', p_record.msg),
+                    l_thread_name[:10],
+                    l_process_name[:10]
+                ))
+                l_conn1.commit()
+            except psycopg2.Error as e1:
+                EcMailer.send_mail(
+                    'TB_EC_DEBUG insert failure: {0}'.format(repr(e1)),
+                    'Sent from EcCsvFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
+                )
+                raise
+
+            l_cursor1.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn1)
+
         # Custom Formatter for the CSV file --> eliminates multiple spaces (and \r\n)
         class EcCsvFormatter(logging.Formatter):
             def format(self, p_record):
-                l_thread_name = threading.current_thread().name
 
                 l_record = logging.LogRecord(
                     p_record.name,
@@ -143,53 +199,19 @@ class EcLogger(logging.Logger):
 
                 if LocalParam.gcm_debugToDB:
                     # log message in TB_EC_DEBUG
-                    l_conn1 = EcLogger.cm_pool.getconn()
-                    l_cursor1 = l_conn1.cursor()
-                    try:
-                        l_cursor1.execute("""
-                                insert into "TB_EC_DEBUG"(
-                                    "ST_NAME",
-                                    "ST_LEVEL",
-                                    "ST_MODULE",
-                                    "ST_FILENAME",
-                                    "ST_FUNCTION",
-                                    "N_LINE",
-                                    "TX_MSG", 
-                                    "ST_THREAD"
-                                )
-                                values(%s, %s, %s, %s, %s, %s, %s, %s);
-                            """, (
-                            p_record.name,
-                            p_record.levelname,
-                            p_record.module,
-                            p_record.pathname,
-                            p_record.funcName,
-                            p_record.lineno,
-                            re.sub('\s+', ' ', p_record.msg),
-                            l_thread_name[:10]
-                        ))
-                        l_conn1.commit()
-                    except psycopg2.Error as e1:
-                        EcMailer.send_mail(
-                            'TB_EC_DEBUG insert failure: {0}'.format(repr(e1)),
-                            'Sent from EcCsvFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
-                        )
-                        raise
+                    db_output(p_record)
 
-                    l_cursor1.close()
-                    EcLogger.cm_pool.putconn(l_conn1)
-
-                l_ret = re.sub('\s+', ' ', super().format(l_record))
-                return l_ret
+                return re.sub('\s+', ' ', super().format(l_record))
 
         # Custom Formatter for the console --> send mail if warning or worse
         class EcConsoleFormatter(logging.Formatter):
             def format(self, p_record):
                 l_formatted = super().format(p_record)
-                l_thread_name = threading.current_thread().name
 
-                # this test is located here and not in the CSV formatter so that it does not get to be performed
-                # needlessly for every debug message
+                if LocalParam.gcm_debugToDB and not LocalParam.gcm_debugToCSV:
+                    # log message in TB_EC_DEBUG
+                    db_output(p_record)
+
                 if LocalParam.gcm_warningsToMail and p_record.levelno >= logging.WARNING:
                     # send mail
                     EcMailer.send_mail(
@@ -201,8 +223,11 @@ class EcLogger(logging.Logger):
                         l_formatted
                     )
 
+                    l_thread_name = threading.current_thread().name
+                    l_process_name = multiprocessing.current_process().name
+
                     # log message in TB_EC_MSG
-                    l_conn1 = EcLogger.cm_pool.getconn()
+                    l_conn1 = EcConnectionPool.get_global_pool().getconn('EcConsoleFormatter.format()')
                     l_cursor1 = l_conn1.cursor()
                     try:
                         l_cursor1.execute("""
@@ -215,9 +240,10 @@ class EcLogger(logging.Logger):
                                 "ST_FUNCTION",
                                 "N_LINE",
                                 "TX_MSG",
-                                "ST_THREAD"
+                                "ST_THREAD",
+                                "ST_PROCESS"
                             )
-                            values(%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                            values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
                         """, (
                             'LOG',
                             p_record.name,
@@ -227,7 +253,8 @@ class EcLogger(logging.Logger):
                             p_record.funcName,
                             p_record.lineno,
                             re.sub('\s+', ' ', p_record.msg),
-                            l_thread_name[:10]
+                            l_thread_name[:10],
+                            l_process_name[:10]
                         ))
                         l_conn1.commit()
                     except psycopg2.Error as e1:
@@ -238,35 +265,43 @@ class EcLogger(logging.Logger):
                         raise
 
                     l_cursor1.close()
-                    EcLogger.cm_pool.putconn(l_conn1)
+                    EcConnectionPool.get_global_pool().putconn(l_conn1)
 
                 return l_formatted
 
         # Install formatters
         l_handler_console.setFormatter(
-            EcConsoleFormatter('ECL:%(levelname)s:%(name)s:%(threadName)s:%(funcName)s:%(message)s'))
-        l_handler_file.setFormatter(
-            EcCsvFormatter('"%(name)s";"%(threadName)s";"%(asctime)s";"%(levelname)s";"%(module)s";' +
-                           '"%(filename)s";"%(funcName)s";%(lineno)d;"%(message)s"'))
+            EcConsoleFormatter('ECL:%(levelname)s:%(name)s:%(processName)s:%(threadName)s:%(funcName)s:%(message)s'))
+
+        if LocalParam.gcm_debugToCSV:
+            l_handler_file.setFormatter(
+                EcCsvFormatter('"%(name)s";"%(processName)s";"%(threadName)s";"%(asctime)s";"%(levelname)s";' +
+                               '"%(module)s";"%(filename)s";"%(funcName)s";%(lineno)d;"%(message)s"'))
 
         # If verbose mode on, both handlers receive messages up to INFO
         if EcAppParam.gcm_verboseModeOn:
             cls.cm_logger.setLevel(logging.INFO)
             l_handler_console.setLevel(logging.INFO)
-            l_handler_file.setLevel(logging.INFO)
+            if LocalParam.gcm_debugToCSV:
+                l_handler_file.setLevel(logging.INFO)
 
         # If debug mode is on, then the console stays as it is but the CSV file now receives everything
         if EcAppParam.gcm_debugModeOn:
             cls.cm_logger.setLevel(logging.DEBUG)
-            l_handler_file.setLevel(logging.DEBUG)
+            if LocalParam.gcm_debugToCSV:
+                l_handler_console.setLevel(logging.INFO)
+                l_handler_file.setLevel(logging.DEBUG)
+            else:
+                l_handler_console.setLevel(logging.DEBUG)
 
         # Install the handlers
         cls.cm_logger.addHandler(l_handler_console)
-        cls.cm_logger.addHandler(l_handler_file)
+        if LocalParam.gcm_debugToCSV:
+            cls.cm_logger.addHandler(l_handler_file)
 
         # Start-up Messages
-        cls.cm_logger.info('-->> Start logging')
-        cls.cm_logger.debug('-->> Start logging')
+        cls.cm_logger.info('-->> Start logging (test: INFO)')
+        cls.cm_logger.debug('-->> Start logging (test: DEBUG)')
 
 
 # -------------------------------------- e-mail messages sending -------------------------------------------------------
@@ -506,6 +541,9 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
     `ThreadedConnectionPool <http://pythonhosted.org/psycopg2/pool.html>`_
     """
 
+    #: global connection pool for the entire application
+    cm_pool = None
+
     @staticmethod
     def is_not_none(v):
         return v if v is not None else 'None'
@@ -538,16 +576,51 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
         return l_block
 
     @classmethod
+    def init_global_pool(cls):
+        """
+        Creates the global pool.
+
+        :return: Nothing
+        """
+
+        cls.cm_pool = None
+        cls.cm_pool = cls.get_new()
+
+    @classmethod
+    def get_global_pool(cls):
+        """
+        Access to the global pool.
+
+        :return:
+        """
+        return cls.cm_pool
+
+    @classmethod
     def get_new(cls):
-        return EcConnectionPool(
-            EcAppParam.gcm_connectionPoolMinCount,
-            EcAppParam.gcm_connectionPoolMaxCount,
-            host=EcAppParam.gcm_dbServer,
-            database=EcAppParam.gcm_dbDatabase,
-            user=EcAppParam.gcm_dbUser,
-            password=EcAppParam.gcm_dbPassword,
-            connection_factory=EcConnection
-        )
+        try:
+            l_new_pool = cls(
+                EcAppParam.gcm_connectionPoolMinCount,
+                EcAppParam.gcm_connectionPoolMaxCount,
+                host=EcAppParam.gcm_dbServer,
+                database=EcAppParam.gcm_dbDatabase,
+                user=EcAppParam.gcm_dbUser,
+                password=EcAppParam.gcm_dbPassword,
+                connection_factory=EcConnection
+            )
+        except psycopg2.Error as e:
+            EcMailer.send_mail(
+                'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
+                'Sent from EcConnectionPool.get_new\n' + EcConnectionPool.get_psycopg2_error_block(e)
+            )
+            raise
+        except Exception as e:
+            EcMailer.send_mail(
+                'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
+                'Non psycopg2 error'
+            )
+            raise
+
+        return l_new_pool
 
     def __init__(self, p_minconn, p_maxconn, *args, **kwargs):
         """
@@ -566,11 +639,6 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
         :param kwargs: Other keyword arguments
             (parameter of `ThreadedConnectionPool <http://pythonhosted.org/psycopg2/pool.html>`_ constructor).
         """
-        self.m_logger = logging.getLogger('ConnectionPool')
-
-        self.m_logger.info('args : [{0}] kwargs : [{1}]'.format(
-            repr(args), repr(kwargs)
-        ))
 
         #: list of all db connections "out there"
         self.m_connectionRegister = []
@@ -582,6 +650,12 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
         self.m_putCalls = 0
 
         super().__init__(p_minconn, p_maxconn, *args, **kwargs)
+
+        self.m_logger = logging.getLogger('ConnectionPool')
+
+        self.m_logger.info('args : [{0}] kwargs : [{1}]'.format(
+            repr(args), repr(kwargs)
+        ))
 
     # noinspection PyMethodOverriding
     def getconn(self, p_debug_data, p_key=None):
