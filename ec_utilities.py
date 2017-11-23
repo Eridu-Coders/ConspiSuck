@@ -53,6 +53,7 @@ class GlobalStart:
             EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
             sys.exit(0)
 
+
 # -------------------------------------- Logging Set-up ----------------------------------------------------------------
 class EcLogger(logging.Logger):
     """
@@ -135,9 +136,12 @@ class EcLogger(logging.Logger):
 
         # One handler for the console (only up to INFO messages) and another for the CSV file (everything)
         l_handler_console = logging.StreamHandler()
-        l_handler_file = logging.FileHandler(EcAppParam.gcm_logFile, mode='a')
+        if LocalParam.gcm_debugToCSV:
+            l_handler_file = logging.FileHandler(EcAppParam.gcm_logFile, mode='a')
+        else:
+            l_handler_file = logging.FileHandler('/dev/null', mode='a')
 
-        def db_output(p_record):
+        def db_output(p_record, p_table):
             l_thread_name = threading.current_thread().name
             l_process_name = multiprocessing.current_process().name
 
@@ -145,7 +149,7 @@ class EcLogger(logging.Logger):
             l_cursor1 = l_conn1.cursor()
             try:
                 l_cursor1.execute("""
-                        insert into "TB_EC_DEBUG"(
+                        insert into "{0}"( {1}
                             "ST_NAME",
                             "ST_LEVEL",
                             "ST_MODULE",
@@ -156,8 +160,12 @@ class EcLogger(logging.Logger):
                             "ST_THREAD",
                             "ST_PROCESS"
                         )
-                        values(%s, %s, %s, %s, %s, %s, %s, %s, %s);
-                    """, (
+                        values({2}%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    """.format(
+                        p_table,
+                        '"ST_TYPE", ' if p_table == 'TB_EC_MSG' else '',
+                        "'LOG', " if p_table == 'TB_EC_MSG' else ''
+                ), (
                     p_record.name,
                     p_record.levelname,
                     p_record.module,
@@ -171,8 +179,9 @@ class EcLogger(logging.Logger):
                 l_conn1.commit()
             except psycopg2.Error as e1:
                 EcMailer.send_mail(
-                    'TB_EC_DEBUG insert failure: {0}'.format(repr(e1)),
-                    'Sent from EcCsvFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
+                    '{0} insert failure: {1}'.format(p_table, repr(e1)),
+                    'Sent from log_init.db_output():\n{0}\n---- SQL ----\n{1}'.format(
+                        EcConnectionPool.get_psycopg2_error_block(e1), l_cursor1.query)
                 )
                 raise
 
@@ -199,7 +208,7 @@ class EcLogger(logging.Logger):
 
                 if LocalParam.gcm_debugToDB:
                     # log message in TB_EC_DEBUG
-                    db_output(p_record)
+                    db_output(p_record, 'TB_EC_DEBUG')
 
                 return re.sub('\s+', ' ', super().format(l_record))
 
@@ -207,10 +216,6 @@ class EcLogger(logging.Logger):
         class EcConsoleFormatter(logging.Formatter):
             def format(self, p_record):
                 l_formatted = super().format(p_record)
-
-                if LocalParam.gcm_debugToDB and not LocalParam.gcm_debugToCSV:
-                    # log message in TB_EC_DEBUG
-                    db_output(p_record)
 
                 if LocalParam.gcm_warningsToMail and p_record.levelno >= logging.WARNING:
                     # send mail
@@ -223,49 +228,7 @@ class EcLogger(logging.Logger):
                         l_formatted
                     )
 
-                    l_thread_name = threading.current_thread().name
-                    l_process_name = multiprocessing.current_process().name
-
-                    # log message in TB_EC_MSG
-                    l_conn1 = EcConnectionPool.get_global_pool().getconn('EcConsoleFormatter.format()')
-                    l_cursor1 = l_conn1.cursor()
-                    try:
-                        l_cursor1.execute("""
-                            insert into "TB_EC_MSG"(
-                                "ST_TYPE",
-                                "ST_NAME",
-                                "ST_LEVEL",
-                                "ST_MODULE",
-                                "ST_FILENAME",
-                                "ST_FUNCTION",
-                                "N_LINE",
-                                "TX_MSG",
-                                "ST_THREAD",
-                                "ST_PROCESS"
-                            )
-                            values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-                        """, (
-                            'LOG',
-                            p_record.name,
-                            p_record.levelname,
-                            p_record.module,
-                            p_record.pathname,
-                            p_record.funcName,
-                            p_record.lineno,
-                            re.sub('\s+', ' ', p_record.msg),
-                            l_thread_name[:10],
-                            l_process_name[:10]
-                        ))
-                        l_conn1.commit()
-                    except psycopg2.Error as e1:
-                        EcMailer.send_mail(
-                            'TB_EC_MSG insert failure: {0}'.format(repr(e1)),
-                            'Sent from EcConsoleFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
-                        )
-                        raise
-
-                    l_cursor1.close()
-                    EcConnectionPool.get_global_pool().putconn(l_conn1)
+                    db_output(p_record, 'TB_EC_MSG')
 
                 return l_formatted
 
@@ -273,8 +236,7 @@ class EcLogger(logging.Logger):
         l_handler_console.setFormatter(
             EcConsoleFormatter('ECL:%(levelname)s:%(name)s:%(processName)s:%(threadName)s:%(funcName)s:%(message)s'))
 
-        if LocalParam.gcm_debugToCSV:
-            l_handler_file.setFormatter(
+        l_handler_file.setFormatter(
                 EcCsvFormatter('"%(name)s";"%(processName)s";"%(threadName)s";"%(asctime)s";"%(levelname)s";' +
                                '"%(module)s";"%(filename)s";"%(funcName)s";%(lineno)d;"%(message)s"'))
 
@@ -282,22 +244,17 @@ class EcLogger(logging.Logger):
         if EcAppParam.gcm_verboseModeOn:
             cls.cm_logger.setLevel(logging.INFO)
             l_handler_console.setLevel(logging.INFO)
-            if LocalParam.gcm_debugToCSV:
-                l_handler_file.setLevel(logging.INFO)
+            l_handler_file.setLevel(logging.INFO)
 
         # If debug mode is on, then the console stays as it is but the CSV file now receives everything
         if EcAppParam.gcm_debugModeOn:
             cls.cm_logger.setLevel(logging.DEBUG)
-            if LocalParam.gcm_debugToCSV:
-                l_handler_console.setLevel(logging.INFO)
-                l_handler_file.setLevel(logging.DEBUG)
-            else:
-                l_handler_console.setLevel(logging.DEBUG)
+            l_handler_console.setLevel(logging.INFO)
+            l_handler_file.setLevel(logging.DEBUG)
 
         # Install the handlers
         cls.cm_logger.addHandler(l_handler_console)
-        if LocalParam.gcm_debugToCSV:
-            cls.cm_logger.addHandler(l_handler_file)
+        cls.cm_logger.addHandler(l_handler_file)
 
         # Start-up Messages
         cls.cm_logger.info('-->> Start logging (test: INFO)')
@@ -340,6 +297,8 @@ class EcMailer(threading.Thread):
         Mail system initialization. Creates an empty :any:`cm_sendMailGovernor` and the associated
         Mutexes to allow critical section protection.
         """
+        print('init_mailer() : ' + multiprocessing.current_process().name)
+
         cls.cm_sendMailGovernor = dict()
         cls.cm_mutexGovernor = threading.Lock()
         cls.cm_mutexFiles = threading.Lock()

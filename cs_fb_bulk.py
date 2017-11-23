@@ -6,14 +6,12 @@ from PIL import ImageEnhance, ImageFilter
 import json
 import base64
 import socket
-import multiprocessing
 from tesserocr import PyTessBaseAPI, RIL
 
 from cs_fb_connect import *
 from wrapvpn import *
 
 __author__ = 'Pavan Mahalingam'
-
 
 # ----------------------------------- Tesseract -----------------------------------------------------------
 # https://pypi.python.org/pypi/tesserocr
@@ -24,8 +22,7 @@ __author__ = 'Pavan Mahalingam'
 # sudo pip3 install tesserocr
 
 class BulkDownloaderException(Exception):
-    def __init__(self, p_msg):
-        self.m_msg = p_msg
+    pass
 
 
 class BulkDownloader:
@@ -97,8 +94,14 @@ class BulkDownloader:
         #: Likes details download Processes
         self.m_likes_details_process = []
 
+        #: Process lock for likes download
+        self.m_likes_lock = None
+
         #: OCR Processes
         self.m_ocr_process = []
+
+        #: Process lock for image OCR
+        self.m_ocr_lock = None
 
         #: Boolean variable controlling the threads. When `False`, all threads stop.
         self.m_threads_proceed = True
@@ -173,9 +176,11 @@ class BulkDownloader:
         :return: Nothing.
         """
         # likes details download processes
-        l_likes_lock = multiprocessing.Lock()
+        self.m_likes_lock = multiprocessing.Lock()
+        # lock is acquired to block the process start
+        self.m_likes_lock.acquire()
         for l_process_number in range(self.m_likes_process_count):
-            p = multiprocessing.Process(target=self.repeat_get_likes_details, args=(l_likes_lock,))
+            p = multiprocessing.Process(target=self.repeat_get_likes_details, args=(self.m_likes_lock,))
             p.name = 'L{0}'.format(l_process_number)
             self.m_likes_details_process.append(p)
             p.start()
@@ -184,9 +189,11 @@ class BulkDownloader:
 
         # OCR process
         if EcAppParam.gcm_ocr_thread:
-            l_ocr_lock = multiprocessing.Lock()
+            self.m_ocr_lock = multiprocessing.Lock()
+            # lock is acquired to block the process start
+            self.m_ocr_lock.acquire()
             for l_process_number in range(self.m_ocr_process_count):
-                p = multiprocessing.Process(target=self.repeat_ocr_image, args=(l_ocr_lock,))
+                p = multiprocessing.Process(target=self.repeat_ocr_image, args=(self.m_ocr_lock,))
                 p.name = 'O{0}'.format(l_process_number)
                 self.m_ocr_process.append(p)
                 p.start()
@@ -227,6 +234,8 @@ class BulkDownloader:
 
         :return:
         """
+        threading.current_thread().name = 'µ'
+
         GlobalStart.basic_env_start()
 
         self.full_init()
@@ -239,8 +248,61 @@ class BulkDownloader:
         """
         self.m_logger.info('Start bulk_download()')
 
+        # clear the locking flags
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.bulk_download() TB_OBJ')
+        l_cursor_write = l_conn_write.cursor()
+
+        self.m_logger.info('Cleaning locks on TB_OBJ')
+        try:
+            l_cursor_write.execute("""
+                update
+                    "TB_OBJ"
+                set
+                    "F_LOCKED" = false
+                where "F_LOCKED";
+            """)
+
+            l_conn_write.commit()
+        except Exception as e:
+            l_conn_write.rollback()
+            l_msg = 'bulk_download Unknown Exception (TB_OBJ) : {0}/{1}'.format(repr(e), l_cursor_write.query)
+            self.m_logger.critical(l_msg)
+            raise BulkDownloaderException(l_msg)
+        finally:
+            # release DB handles when finished
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.bulk_download() TB_MEDIA')
+        l_cursor_write = l_conn_write.cursor()
+
+        try:
+            l_cursor_write.execute("""
+                update
+                    "TB_MEDIA"
+                set
+                    "F_LOCK" = false
+                where "F_LOCK";
+            """)
+
+            l_conn_write.commit()
+        except Exception as e:
+            l_conn_write.rollback()
+            l_msg = 'bulk_download Unknown Exception (TB_MEDIA) : {0}/{1}'.format(repr(e), l_cursor_write.query)
+            self.m_logger.critical(l_msg)
+            raise BulkDownloaderException(l_msg)
+        finally:
+            # release DB handles when finished
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        # release child processes
+        self.m_likes_lock.release()
+        if self.m_ocr_lock is not None:
+            self.m_ocr_lock.release()
+
         while True:
-            self.m_logger.info('top of bulk_download() main loop')
+            self.m_logger.info('TOPBLK top of bulk_download() main loop')
             self.start_threads()
 
             if self.m_gat_pages:
@@ -273,7 +335,14 @@ class BulkDownloader:
             l_field_list)
 
         # perform the request
-        l_response = self.perform_request(l_request)
+        try:
+            l_response = self.perform_request(l_request)
+        except BulkDownloaderException as e:
+            if str(e) == 'NON_EXIST':
+                self.m_logger.critical('TestPage said not to exist !!')
+                sys.exit(0)
+            else:
+                raise
 
         self.m_logger.info('l_request:' + l_request)
 
@@ -297,7 +366,14 @@ class BulkDownloader:
                             l_field_list)
 
                     # perform the second request
-                    l_response_post = self.perform_request(l_request_post)
+                    try:
+                        l_response_post = self.perform_request(l_request_post)
+                    except BulkDownloaderException as e:
+                        if str(e) == 'NON_EXIST':
+                            self.m_logger.warning('Page with ID {0} said by FB not to exist'.format(l_parent_id))
+                            continue
+                        else:
+                            raise
 
                     # decode the JSON we got from the second request
                     l_response_post_data = json.loads(l_response_post)
@@ -382,28 +458,33 @@ class BulkDownloader:
         l_cursor = l_conn.cursor()
 
         # select all pages from TB_PAGES
+        l_page_list = []
         try:
             l_cursor.execute("""
                 select "ID", "TX_NAME" 
                 from "TB_PAGES"
-                where "F_DNL" = 'Y'  
+                where "F_DNL" = 'Y' and not "F_NON_EXIST" 
                 order by "DT_CRE";
             """)
+
+            for l_record in l_cursor:
+                l_page_list.append(l_record)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query))
             raise
+        finally:
+            # release DB objects once finished
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         # loop through all pages
-        for l_id, l_name in l_cursor:
+        for l_id, l_name in l_page_list:
             self.m_logger.info('$$$$$$$$$ [{0}] $$$$$$$$$$'.format(l_name))
             # store the current page name for future reference (debug displays mostly)
             self.m_page = l_name
             # get posts from the current page
             self.get_posts_from_page(l_id)
 
-        # release DB objects once finished
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
         self.m_logger.info('End get_posts()')
 
     def get_posts_from_page(self, p_id):
@@ -429,7 +510,15 @@ class BulkDownloader:
             l_field_list)
 
         # perform the request
-        l_response = self.perform_request(l_request)
+        try:
+            l_response = self.perform_request(l_request)
+        except BulkDownloaderException as e:
+            if str(e) == 'NON_EXIST':
+                self.m_logger.warning('Page with ID {0} said by FB not to exist'.format(p_id))
+                self.set_non_exist(p_id, p_page=True)
+                return
+            else:
+                raise
         # decode the JSON request response
         l_response_data = json.loads(l_response)
 
@@ -631,7 +720,14 @@ class BulkDownloader:
             l_field_list)
 
         # perform the request
-        l_response = self.perform_request(l_request)
+        try:
+            l_response = self.perform_request(l_request)
+        except BulkDownloaderException as e:
+            if str(e) == 'NON_EXIST':
+                self.m_logger.warning('Parent post with ID {0} said by FB not to exist'.format(p_fb_parent_id))
+                return
+            else:
+                raise
         # decode the JSON request response
         l_response_data = json.loads(l_response)
 
@@ -718,7 +814,15 @@ class BulkDownloader:
             l_field_list)
 
         # perform the request
-        l_response = self.perform_request(l_request)
+        try:
+            l_response = self.perform_request(l_request)
+        except BulkDownloaderException as e:
+            if str(e) == 'NON_EXIST':
+                self.m_logger.warning('Post with ID {0} said by FB not to exist (attachments query)'.format(p_post_id))
+                self.set_non_exist(p_post_id)
+                return
+            else:
+                raise
         # decode the JSON response
         l_response_data = json.loads(l_response)
 
@@ -866,7 +970,15 @@ class BulkDownloader:
             l_field_list)
 
         # perform request
-        l_response = self.perform_request(l_request)
+        try:
+            l_response = self.perform_request(l_request)
+        except BulkDownloaderException as e:
+            if str(e) == 'NON_EXIST':
+                self.m_logger.warning('Post with ID {0} said by FB not to exist (comments query)'.format(p_id))
+                self.set_non_exist(p_id)
+                return
+            else:
+                raise
         # decode JSON request response
         l_response_data = json.loads(l_response)
 
@@ -989,6 +1101,7 @@ class BulkDownloader:
                             "DT_LAST_UPDATE" is null
                             or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
                         )
+                        and not "F_NON_EXIST"
                 """, (EcAppParam.gcm_days_depth,))
 
                 l_count = -1
@@ -1001,10 +1114,10 @@ class BulkDownloader:
                 self.m_logger.critical('repeat_posts_update() Unknown Exception: {0}/{1}'.format(
                     repr(e), l_cursor.query))
                 raise BulkDownloaderException('repeat_posts_update() Unknown Exception: {0}'.format(repr(e)))
-
-            # close DB access handles when finished
-            l_cursor.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn)
+            finally:
+                # close DB access handles when finished
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
 
             if not l_finished:
                 try:
@@ -1032,6 +1145,7 @@ class BulkDownloader:
         l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_posts()')
         l_cursor = l_conn.cursor()
 
+        l_post_list = []
         try:
             l_cursor.execute("""
                 select
@@ -1046,95 +1160,109 @@ class BulkDownloader:
                         "DT_LAST_UPDATE" is null
                         or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
                     )
+                    and not "F_NON_EXIST"
                 limit 100;
             """, (EcAppParam.gcm_days_depth,))
 
             # loop through the posts obtained from the DB
-            for l_post_id, l_page_id, l_comment_flag in l_cursor:
-                # thread abort
-                if not self.m_threads_proceed:
-                    break
+            for l_record in l_cursor:
+                l_post_list.append(l_record)
 
-                self.m_postRetrieved += 1
-                # get post data
-                l_field_list = 'id,created_time,from,story,message,' + \
-                               'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
-
-                # FB API request to get the data for this post
-                l_request = 'https://graph.facebook.com/{0}/{1}?limit={2}&access_token={3}&fields={4}'.format(
-                    EcAppParam.gcm_api_version,
-                    l_post_id,
-                    EcAppParam.gcm_limit,
-                    self.m_long_token,
-                    l_field_list)
-
-                # perform request
-                l_response = self.perform_request(l_request)
-                # decode request's JSON response
-                l_response_data = json.loads(l_response)
-
-                self.m_logger.info('============= UPDATE ==============================================')
-                self.m_logger.info('Post ID     : {0}'.format(l_post_id))
-                if 'created_time' in l_response_data.keys():
-                    self.m_logger.info('Post date   : {0}'.format(l_response_data['created_time']))
-                    self.m_logger.info('Comm. dnl ? : {0}'.format(l_comment_flag))
-
-                # basic post data
-                l_name, l_name_short = BulkDownloader.get_optional_field(l_response_data, 'name')
-                l_caption, l_caption_short = BulkDownloader.get_optional_field(l_response_data, 'caption')
-                l_description, l_description_sh = BulkDownloader.get_optional_field(l_response_data, 'description')
-                l_story, l_story_short = BulkDownloader.get_optional_field(l_response_data, 'story')
-                l_message, l_message_short = BulkDownloader.get_optional_field(l_response_data, 'message')
-
-                # shares count for the post
-                l_shares = int(l_response_data['shares']['count']) if 'shares' in l_response_data.keys() else 0
-
-                # debug display
-                self.m_logger.info('name        : {0}'.format(l_name_short))
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('caption     : {0}'.format(l_caption_short))
-                    self.m_logger.info('description : {0}'.format(l_description_sh))
-                    self.m_logger.info('story       : {0}'.format(l_story_short))
-                    self.m_logger.info('message     : {0}'.format(l_message_short))
-                    self.m_logger.info('shares      : {0}'.format(l_shares))
-
-                # FB API request to get post likes count (actually will get the first page of the full likes list
-                # because there is no way to get the count by itself)
-                l_request = \
-                    'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}&summary=true'.format(
-                        EcAppParam.gcm_api_version,
-                        l_post_id,
-                        25,
-                        self.m_long_token,
-                        l_field_list)
-
-                # performs the request
-                l_response = self.perform_request(l_request)
-                # decodes the request's JSON response
-                l_response_data = json.loads(l_response)
-
-                # get the count if present, otherwise 0
-                l_like_count = 0
-                if 'summary' in l_response_data.keys():
-                    l_like_count = int(l_response_data['summary']['total_count'])
-
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('likes       : {0}'.format(l_like_count))
-
-                l_update_ok = self.update_object(
-                    l_post_id, l_shares, l_like_count, l_name, l_caption, l_description, l_story, l_message)
-
-                # get comments if l_comment_flag is set and the post update was successful
-                if l_update_ok and l_comment_flag == 'X':
-                    self.get_comments(l_post_id, l_post_id, l_page_id, 0)
-            # end loop: for l_post_id, l_page_id, l_comment_flag in l_cursor:
         except Exception as e:
             self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('Post Update Unknown Exception: {0}'.format(repr(e)))
+        finally:
+            # close DB access handles when finished
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
-        # close DB access handles when finished
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        # loop through the posts obtained from the DB
+        for l_post_id, l_page_id, l_comment_flag in l_post_list:
+            # thread abort
+            if not self.m_threads_proceed:
+                break
+
+            self.m_postRetrieved += 1
+            # get post data
+            l_field_list = 'id,created_time,from,story,message,' + \
+                           'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
+
+            # FB API request to get the data for this post
+            l_request = 'https://graph.facebook.com/{0}/{1}?limit={2}&access_token={3}&fields={4}'.format(
+                EcAppParam.gcm_api_version,
+                l_post_id,
+                EcAppParam.gcm_limit,
+                self.m_long_token,
+                l_field_list)
+
+            # perform request
+            try:
+                l_response = self.perform_request(l_request)
+            except BulkDownloaderException as e:
+                if str(e) == 'NON_EXIST':
+                    self.m_logger.warning('Post with ID {0} said by FB not to exist (update)'.format(l_post_id))
+                    self.set_non_exist(l_post_id)
+                    continue
+                else:
+                    raise
+            # decode request's JSON response
+            l_response_data = json.loads(l_response)
+
+            self.m_logger.info('============= UPDATE ==============================================')
+            self.m_logger.info('Post ID     : {0}'.format(l_post_id))
+            if 'created_time' in l_response_data.keys():
+                self.m_logger.info('Post date   : {0}'.format(l_response_data['created_time']))
+                self.m_logger.info('Comm. dnl ? : {0}'.format(l_comment_flag))
+
+            # basic post data
+            l_name, l_name_short = BulkDownloader.get_optional_field(l_response_data, 'name')
+            l_caption, l_caption_short = BulkDownloader.get_optional_field(l_response_data, 'caption')
+            l_description, l_description_sh = BulkDownloader.get_optional_field(l_response_data, 'description')
+            l_story, l_story_short = BulkDownloader.get_optional_field(l_response_data, 'story')
+            l_message, l_message_short = BulkDownloader.get_optional_field(l_response_data, 'message')
+
+            # shares count for the post
+            l_shares = int(l_response_data['shares']['count']) if 'shares' in l_response_data.keys() else 0
+
+            # debug display
+            self.m_logger.info('name        : {0}'.format(l_name_short))
+            if EcAppParam.gcm_verboseModeOn:
+                self.m_logger.info('caption     : {0}'.format(l_caption_short))
+                self.m_logger.info('description : {0}'.format(l_description_sh))
+                self.m_logger.info('story       : {0}'.format(l_story_short))
+                self.m_logger.info('message     : {0}'.format(l_message_short))
+                self.m_logger.info('shares      : {0}'.format(l_shares))
+
+            # FB API request to get post likes count (actually will get the first page of the full likes list
+            # because there is no way to get the count by itself)
+            l_request = \
+                'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}&summary=true'.format(
+                    EcAppParam.gcm_api_version,
+                    l_post_id,
+                    25,
+                    self.m_long_token,
+                    l_field_list)
+
+            # performs the request
+            l_response = self.perform_request(l_request)
+            # decodes the request's JSON response
+            l_response_data = json.loads(l_response)
+
+            # get the count if present, otherwise 0
+            l_like_count = 0
+            if 'summary' in l_response_data.keys():
+                l_like_count = int(l_response_data['summary']['total_count'])
+
+            if EcAppParam.gcm_verboseModeOn:
+                self.m_logger.info('likes       : {0}'.format(l_like_count))
+
+            l_update_ok = self.update_object(
+                l_post_id, l_shares, l_like_count, l_name, l_caption, l_description, l_story, l_message)
+
+            # get comments if l_comment_flag is set and the post update was successful
+            if l_update_ok and l_comment_flag == 'X':
+                self.get_comments(l_post_id, l_post_id, l_page_id, 0)
+        # end loop: for l_post_id, l_page_id, l_comment_flag in l_post_list:
 
         self.m_logger.info('End update_posts()')
 
@@ -1155,6 +1283,10 @@ class BulkDownloader:
 
         self.m_logger.info('Start repeat_get_likes_details()')
 
+        # to block process start until released
+        p_lock.acquire()
+        p_lock.release()
+
         while True:
             # get the total count of objects that remains to be processed
 
@@ -1173,6 +1305,7 @@ class BulkDownloader:
                         "ST_TYPE" != 'Page'
                         AND DATE_PART('day', now()::date - "DT_CRE") >= %s
                         AND NOT "F_LOCKED"
+                        AND NOT "F_NON_EXIST"
                         AND "F_LIKE_DETAIL" is null
                 """, (EcAppParam.gcm_likes_depth,))
 
@@ -1184,10 +1317,10 @@ class BulkDownloader:
                 l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
                 self.m_logger.critical(l_msg)
                 raise BulkDownloaderException(l_msg)
-
-            # release DB handles when finished
-            l_cursor.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn)
+            finally:
+                # release DB handles when finished
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
 
             if l_count > 0:
                 try:
@@ -1227,8 +1360,9 @@ class BulkDownloader:
                     "ST_TYPE" != 'Page'
                     AND DATE_PART('day', now()::date - "DT_CRE") >= %s
                     AND NOT "F_LOCKED"
+                    AND NOT "F_NON_EXIST"
                     AND "F_LIKE_DETAIL" is null
-                LIMIT 100
+                LIMIT 500
             """, (EcAppParam.gcm_likes_depth,))
 
             for l_record in l_cursor:
@@ -1240,10 +1374,10 @@ class BulkDownloader:
             l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
             self.m_logger.critical(l_msg)
             raise BulkDownloaderException(l_msg)
-
-        # release DB handles when finished
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            # release DB handles when finished
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         # get DB connection and cursor
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Write')
@@ -1256,16 +1390,19 @@ class BulkDownloader:
                 SET
                     "F_LOCKED" = TRUE
                 WHERE
-                    "ID_INTERNAL" in (%s)
-            """, (','.join([str(l_internal_id) for _, l_internal_id, _ in l_obj_list]),))
+                    "ID_INTERNAL" in ({0})
+            """.format(','.join([str(l_internal_id) for _, l_internal_id, _ in l_obj_list])))
+
+            l_conn_write.commit()
         except Exception as e:
-            l_msg = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(repr(e), l_cursor.query)
+            l_conn_write.rollback()
+            l_msg = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(repr(e), l_cursor_write.query)
             self.m_logger.critical(l_msg)
             raise BulkDownloaderException(l_msg)
-
-        # release DB handles when finished
-        l_cursor_write.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn_write)
+        finally:
+            # release DB handles when finished
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
         # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
         p_lock.release()
@@ -1288,7 +1425,16 @@ class BulkDownloader:
                 self.m_long_token)
 
             # perform request
-            l_response = self.perform_request(l_request)
+            try:
+                l_response = self.perform_request(l_request)
+            except BulkDownloaderException as e:
+                if str(e) == 'NON_EXIST':
+                    self.m_logger.warning(
+                        'Post/comment with ID {0} said by FB not to exist (likes detail)'.format(l_id))
+                    self.set_non_exist(l_id)
+                    continue
+                else:
+                    raise
             # decode request's JSON response
             l_response_data = json.loads(l_response)
 
@@ -1360,12 +1506,15 @@ class BulkDownloader:
         :return: Nothing 
         """
         self.m_logger.info('Start repeat_fetch_images()')
-        while self.m_threads_proceed:
+        l_finished = False
+        while self.m_threads_proceed and not l_finished:
+            l_count = 0
             try:
-                self.fetch_images()
+                l_count = self.fetch_images()
             except Exception as e:
                 self.m_logger.warning(repr(e))
 
+            l_finished = l_count == 0
             time.sleep(1)
 
         self.m_logger.info('End repeat_fetch_images()')
@@ -1523,6 +1672,7 @@ class BulkDownloader:
 
         # load 100 `TB_MEDIA` which have an image link but have not been loaded or had an error while loading
         # previously.
+        l_image_list = []
         try:
             l_cursor.execute("""
                 select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL", "TX_PICTURE", "TX_FULL_PICTURE" 
@@ -1530,13 +1680,22 @@ class BulkDownloader:
                 where not "F_LOADED" and not "F_ERROR"
                 limit 100;
             """)
+
+            for l_record in l_cursor:
+                l_image_list.append(l_record)
+
         except Exception as e:
             l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
             self.m_logger.warning(l_msg)
             raise BulkDownloaderException(l_msg)
+        finally:
+            # releases outer DB cursor and connection
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
-        # load through the batch of records
-        for l_src, l_width, l_height, l_internal, l_picture, l_full_picture in l_cursor:
+        l_img_count = 0
+        # loop through the batch of records
+        for l_src, l_width, l_height, l_internal, l_picture, l_full_picture in l_image_list:
             # thread abort
             if not self.m_threads_proceed:
                 break
@@ -1547,12 +1706,12 @@ class BulkDownloader:
 
             l_error, l_error_pic, l_error_fp = False, False, False
             l_fmt, l_image_txt = '', ''
-            l_fmt_pic, l_image_txt_pic = '', ''
+            # l_fmt_pic, l_image_txt_pic = '', ''
             l_fmt_fp, l_image_txt_fp = '', ''
             if l_src is not None and len(l_src) > 0:
                 l_fmt, l_image_txt, l_error = self.get_image(l_src, l_internal)
-            if l_picture is not None and len(l_picture) > 0:
-                l_fmt_pic, l_image_txt_pic, l_error_pic = self.get_image(l_picture, l_internal)
+            # if l_picture is not None and len(l_picture) > 0:
+            #     l_fmt_pic, l_image_txt_pic, l_error_pic = self.get_image(l_picture, l_internal)
             if l_full_picture is not None and len(l_full_picture) > 0:
                 l_fmt_fp, l_image_txt_fp, l_error_fp = self.get_image(l_full_picture, l_internal)
 
@@ -1568,34 +1727,34 @@ class BulkDownloader:
                         "F_LOADED" = true, 
                         "TX_BASE64" = %s, 
                         "F_ERROR" = %s,
-                        "TX_BASE64_PIC" = %s, 
                         "TX_BASE64_FP" = %s,
                         "ST_FORMAT" = %s, 
-                        "ST_FORMAT_PIC" = %s, 
                         "ST_FORMAT_FP" = %s 
                     where "ID_MEDIA_INTERNAL" = %s;
                 """, (l_image_txt,
-                      l_error or l_error_pic or l_error_fp,
-                      l_image_txt_pic, l_image_txt_fp, l_fmt, l_fmt_pic, l_fmt_fp, l_internal))
+                      l_error or l_error_fp,
+                      l_image_txt_fp,
+                      l_fmt,
+                      l_fmt_fp,
+                      l_internal))
                 l_conn_write.commit()
             except Exception as e:
                 l_conn_write.rollback()
                 l_msg = 'Error updating TB_MEDIA: {0}'.format(repr(e))
                 self.m_logger.warning(l_msg)
                 raise BulkDownloaderException(l_msg)
+            finally:
+                # releases write operation DB connection and cursor
+                l_cursor_write.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
             self.m_logger.info('Fetched image for internal ID: {0}'.format(l_internal))
 
-            # releases write operation DB connection and cursor
-            l_cursor_write.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn_write)
-        # end loop: for l_src, l_width, l_height, l_internal in l_cursor:
-
-        # releases outer DB cursor and connection
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+            l_img_count += 1
+        # end loop: for l_src, l_width, l_height, l_internal in l_image_list:
 
         self.m_logger.info('End fetch_images()')
+        return l_img_count
 
     def repeat_ocr_image(self, p_lock):
         """
@@ -1608,12 +1767,17 @@ class BulkDownloader:
         :param p_lock: Lock protecting `F_LOCK` in `TB_MEDIA`
         :return: Nothing
         """
-        # restart the connection pool
+        # set-up logging environment, etc
         self.new_process_init()
 
         self.m_logger.info('Start repeat_ocr_image()')
 
+        # to block process start until released
+        p_lock.acquire()
+        p_lock.release()
+
         while self.m_threads_proceed:
+            self.m_logger.info('top of repeat_ocr_image() loop')
             try:
                 self.ocr_images(p_lock)
             except Exception as e:
@@ -1690,18 +1854,19 @@ class BulkDownloader:
                 where "M"."F_LOADED" and not "M"."F_ERROR" and not "M"."F_OCR" and not "M"."F_LOCK"
                 limit %s;
             """, (l_max_img_count, ))
+
+            l_media_list = []
+            for l_record in l_cursor:
+                l_media_list.append(l_record)
+
         except Exception as e:
             l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
             self.m_logger.warning(l_msg)
             raise BulkDownloaderException(l_msg)
-
-        l_media_list = []
-        for l_record in l_cursor:
-            l_media_list.append(l_record)
-
-        # DB handles released after use
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            # DB handles released after use
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
         l_cursor_write = l_conn_write.cursor()
@@ -1709,16 +1874,23 @@ class BulkDownloader:
             l_cursor_write.execute("""
                 update "TB_MEDIA"
                 set "F_LOCK" = true
-                where "ID_MEDIA_INTERNAL" in (%s);
-                    """, (','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list]),))
+                where "ID_MEDIA_INTERNAL" in ({0});
+                    """.format(','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list])))
+
+            l_conn_write.commit()
+            self.m_logger.info('LCKOCR Marked {0} images as locked for OCR'.format(len(l_media_list)))
+            # with open('tmp.sql', 'w') as f:
+            #     f.write(l_cursor_write.query.decode('utf-8'))
         except Exception as e:
-            l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+            l_conn_write.rollback()
+
+            l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
             self.m_logger.warning(l_msg)
             raise BulkDownloaderException(l_msg)
-
-        # DB handles released after use
-        l_cursor_write.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn_write)
+        finally:
+            # DB handles released after use
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
         # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
         p_lock.release()
@@ -1740,42 +1912,20 @@ class BulkDownloader:
             if l_debug_messages:
                 print('+++++++++++[{0}]++++++++++++++++++++++++++++++++++++++++++++++++++++++'.format(l_img_count))
             else:
-                os.system('rm -f {0}/*'.format(l_img_path))
+                os.system('rm -f {0}/{1}_img*.png'.format(l_img_path, multiprocessing.current_process().name))
 
             l_file_list = []
 
-            # internal function mark the current record in 'TB_MEDIA' as done
-            def mark_as_ocred():
-                l_conn_w = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images() UPDATE')
-                l_cursor_w = l_conn_w.cursor()
-
-                self.m_logger.info('OCR complete on [{0}]'.format(l_internal))
-                try:
-                    l_cursor_w.execute("""
-                        update "TB_MEDIA"
-                        set 
-                            "F_OCR" = true,
-                            "F_LOCK" = false
-                        where "ID_MEDIA_INTERNAL" = %s
-                    """, (l_internal, ))
-                    l_conn_w.commit()
-                except Exception as e1:
-                    l_conn_w.rollback()
-                    l_msg0 = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e1), l_cursor_w.query)
-                    self.m_logger.warning(l_msg0)
-                    raise BulkDownloaderException(l_msg0)
-
-                l_cursor_w.close()
-                EcConnectionPool.get_global_pool().putconn(l_conn_w)
-
             # special case: there are no images ---> mark record as OCRed
             if (l_base64 is None or len(l_base64) == 0) and (l_base64 is None or len(l_base64) == 0):
-                mark_as_ocred()
+                self.mark_as_ocred(l_internal)
                 continue
 
             # internal function handling th task required when creating a new image version
             def add_image(p_image, p_suffix):
-                l_file = os.path.join(l_img_path, 'img{0:03}_{1}.png'.format(l_img_count, p_suffix))
+                l_file = os.path.join(l_img_path, '{0}_img{1:03}_{2}.png'.format(
+                    multiprocessing.current_process().name,
+                    l_img_count, p_suffix))
                 p_image.save(l_file)
                 l_file_list.append(l_file)
                 return p_image
@@ -1788,7 +1938,7 @@ class BulkDownloader:
                     l_bas64_select = l_base64
                 else:
                     # theoretically, this cannot happen
-                    mark_as_ocred()
+                    self.mark_as_ocred(l_internal)
                     continue
             else:
                 l_bas64_select = None
@@ -1808,7 +1958,7 @@ class BulkDownloader:
                     if l_base64 is not None and len(l_base64) > 0:
                         l_bas64_select = l_base64
                     else:
-                        mark_as_ocred()
+                        self.mark_as_ocred(l_internal)
                         continue
 
             self.m_logger.info('len(l_bas64_select): {0}'.format(
@@ -2034,20 +2184,25 @@ class BulkDownloader:
                     print('     {0}'.format(l_list))
                     print('     {0}'.format(l_raw_list))
 
-            # build two result lists of results with the ordinary English training data and the joh data
-            # OCR - eng
-            with PyTessBaseAPI(lang='eng') as l_api_eng:
-                l_result_list_eng, l_max_avg_eng, l_max_dict_ratio_eng, l_avg_dict_ratio_eng = \
-                    get_result_list(l_file_list, l_api_eng, 'eng')
-                if l_debug_messages and len(l_result_list_eng) > 0:
-                    display_results(l_result_list_eng, 'eng')
+            try:
+                # build two result lists of results with the ordinary English training data and the joh data
+                # OCR - eng
+                with PyTessBaseAPI(lang='eng') as l_api_eng:
+                    l_result_list_eng, l_max_avg_eng, l_max_dict_ratio_eng, l_avg_dict_ratio_eng = \
+                        get_result_list(l_file_list, l_api_eng, 'eng')
+                    if l_debug_messages and len(l_result_list_eng) > 0:
+                        display_results(l_result_list_eng, 'eng')
 
-            # OCR - joh
-            with PyTessBaseAPI(lang='joh') as l_api_joh:
-                l_result_list_joh, l_max_avg_joh, l_max_dict_ratio_joh, l_avg_dict_ratio_joh = \
-                    get_result_list(l_file_list, l_api_joh, 'joh')
-                if l_debug_messages and len(l_result_list_joh) > 0:
-                    display_results(l_result_list_joh, 'joh')
+                # OCR - joh
+                with PyTessBaseAPI(lang='joh') as l_api_joh:
+                    l_result_list_joh, l_max_avg_joh, l_max_dict_ratio_joh, l_avg_dict_ratio_joh = \
+                        get_result_list(l_file_list, l_api_joh, 'joh')
+                    if l_debug_messages and len(l_result_list_joh) > 0:
+                        display_results(l_result_list_joh, 'joh')
+            except Exception as e:
+                self.m_logger.warning('OCR error [{0}] l_internal = {1}'.format(repr(e), l_internal))
+                self.mark_as_ocred(l_internal)
+                continue
 
             # internal function for selecting the final version
             def select_final_version(p_result_list):
@@ -2073,7 +2228,8 @@ class BulkDownloader:
                         l_max_len = len(l_list)
 
                     # suffix extraction from the image filename
-                    l_file = re.sub(r'images_ocr/img\d+_', '', l_file)
+                    l_file = re.sub(
+                        r'images_ocr/{0}_img\d+_'.format(multiprocessing.current_process().name), '', l_file)
                     l_suffix = re.sub(r'\.png', '', l_file)
 
                     # suffix score accounting
@@ -2146,37 +2302,16 @@ class BulkDownloader:
                     print('VOCABULARY:', ' '.join(l_vocabulary))
                     print('[{0}] VOCABULARY:'.format(l_img_count), ' '.join(l_vocabulary), file=sys.stderr)
 
-                l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images() UPDATE')
-                l_cursor_write = l_conn_write.cursor()
-
+                self.update_media_ocr(l_text, l_vocabulary, l_internal)
                 self.m_logger.info('OCR complete on [{0}]: {1}'.format(l_internal, l_text))
-                try:
-                    l_cursor_write.execute("""
-                        update "TB_MEDIA"
-                        set 
-                            "F_OCR" = true
-                            , "F_LOCK" = false
-                            , "TX_TEXT" = %s
-                            , "TX_VOCABULARY" = %s
-                        where "ID_MEDIA_INTERNAL" = %s
-                    """, (l_text, ' '.join(l_vocabulary), l_internal))
-                    l_conn_write.commit()
-                except Exception as e:
-                    l_conn_write.rollback()
-                    l_msg = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
-                    self.m_logger.warning(l_msg)
-                    raise BulkDownloaderException(l_msg)
-
-                l_cursor_write.close()
-                EcConnectionPool.get_global_pool().putconn(l_conn_write)
             else:
                 # nothing to store, just mark the ocr as done
-                mark_as_ocred()
+                self.mark_as_ocred(l_internal)
 
             l_img_count += 1
             if l_img_count == l_max_img_count:
                 break
-        # end for l_internal, l_base64 in l_cursor:
+        # end of loop: for l_internal, l_media_src, l_full_picture, l_base64, l_base64_fp, l_att_count in l_media_list:
 
         # final results
         if l_debug_messages:
@@ -2297,6 +2432,12 @@ class BulkDownloader:
                             l_msg = 'FB session expiry msg: {0}'.format(l_fb_message)
                             self.m_logger.critical(l_msg)
                             raise BulkDownloaderException(l_msg)
+
+                    # Object does not exist
+                    elif re.search(r'Object\s+with\s+ID\s+\'[\d_]+\'\s+does\s+not\s+exist', l_fb_message):
+                        self.m_logger.warning('NON_EXIST Non existent FB object : {0}'.format(l_fb_message))
+
+                        raise BulkDownloaderException('NON_EXIST')
 
                     # Unsupported get request ---> return empty data and abandon request attempt
                     elif re.search(r'Unsupported get request', l_fb_message):
@@ -2551,11 +2692,12 @@ class BulkDownloader:
             self.m_logger.info('{0}Object already in TB_OBJ [{1}]'.format(p_padding, repr(e)))
             l_conn.rollback()
         except Exception as e:
+            l_conn.rollback()
             self.m_logger.warning('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.info(
             '{0}Object counts: {1} attempts / {2} stored / {3} posts retrieved / {4} comments retrieved'.format(
@@ -2566,6 +2708,71 @@ class BulkDownloader:
                 self.m_commentRetrieved))
 
         self.m_logger.debug('End store_object()')
+        return l_stored
+
+    def set_non_exist(self, p_id, p_page=False):
+        """
+
+        :param p_id:
+        :param p_page:
+        :return:
+        """
+        self.m_logger.debug('Start set_non_exist()')
+        l_stored = False
+
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_object()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                UPDATE "TB_OBJ"
+                SET
+                    "F_NON_EXIST" = true,
+                    "F_LOCKED" = false
+                WHERE "ID" = %s
+            """, (p_id, ))
+            l_conn.commit()
+            l_stored = True
+        except psycopg2.IntegrityError as e:
+            self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+            l_conn.rollback()
+        except Exception as e:
+            l_conn.rollback()
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        if p_page:
+            l_stored_page = False
+
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_object()')
+            l_cursor = l_conn.cursor()
+
+            try:
+                l_cursor.execute("""
+                    UPDATE "TB_PAGES"
+                    SET
+                        "F_NON_EXIST" = true
+                    WHERE "ID" = %s
+                """, (p_id,))
+                l_conn.commit()
+                l_stored_page = True
+            except psycopg2.IntegrityError as e:
+                self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+                l_conn.rollback()
+            except Exception as e:
+                l_conn.rollback()
+                self.m_logger.critical('TB_PAGES Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+                raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
+            finally:
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
+
+            l_stored = l_stored and l_stored_page
+
+        self.m_logger.debug('End set_non_exist()')
         return l_stored
 
     def update_object(self, p_id, p_share_count, p_like_count, p_name, p_caption, p_desc, p_story, p_message):
@@ -2608,11 +2815,12 @@ class BulkDownloader:
             self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
             l_conn.rollback()
         except Exception as e:
+            l_conn.rollback()
             self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End update_object()')
         return l_stored
@@ -2669,11 +2877,12 @@ class BulkDownloader:
             # print('{0}PostgreSQL: {1}'.format(p_padding, e))
             l_conn.rollback()
         except Exception as e:
+            l_conn.rollback()
             self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End store_user()')
         return l_inserted
@@ -2703,9 +2912,9 @@ class BulkDownloader:
         except Exception as e:
             self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End get_user_internal_id()')
         return l_ret_id
@@ -2740,11 +2949,12 @@ class BulkDownloader:
             if EcAppParam.gcm_verboseModeOn:
                 self.m_logger.info('Like link already exists')
         except Exception as e:
+            l_conn.rollback()
             self.m_logger.critical('TB_LIKE Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End create_like_link()')
         return l_inserted
@@ -2773,9 +2983,9 @@ class BulkDownloader:
             l_conn.rollback()
             self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('End set_like_flag()')
 
@@ -2832,13 +3042,78 @@ class BulkDownloader:
                 p_media, p_media_src, p_width, p_height, p_picture, p_full_picture, p_from_parent))
             l_conn.commit()
         except Exception as e:
+            l_conn.rollback()
             self.m_logger.warning('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_MEDIA Unknown Exception: {0}'.format(repr(e)))
-
-        l_cursor.close()
-        EcConnectionPool.get_global_pool().putconn(l_conn)
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
 
         self.m_logger.debug('Start store_media()')
+
+    def mark_as_ocred(self, p_internal):
+        """
+
+        :param p_internal:
+        :return:
+        """
+
+        l_conn_w = EcConnectionPool.get_global_pool().getconn('BulkDownloader.mark_as_ocred() UPDATE')
+        l_cursor_w = l_conn_w.cursor()
+
+        self.m_logger.info('OCR complete on [{0}]'.format(p_internal))
+        try:
+            l_cursor_w.execute("""
+                        update "TB_MEDIA"
+                        set 
+                            "F_OCR" = true,
+                            "F_LOCK" = false
+                        where "ID_MEDIA_INTERNAL" = %s
+                    """, (p_internal,))
+            l_conn_w.commit()
+        except Exception as e1:
+            l_conn_w.rollback()
+            l_msg0 = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e1), l_cursor_w.query)
+            self.m_logger.warning(l_msg0)
+            raise BulkDownloaderException(l_msg0)
+        finally:
+            l_cursor_w.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_w)
+
+    def update_media_ocr(self, p_text, p_vocabulary, p_internal):
+        """
+
+        :param p_text:
+        :param p_vocabulary:
+        :param p_internal:
+        :return:
+        """
+        self.m_logger.info('update_media_ocr() start')
+
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_media_ocr() UPDATE')
+        l_cursor_write = l_conn_write.cursor()
+
+        try:
+            l_cursor_write.execute("""
+                update "TB_MEDIA"
+                set 
+                    "F_OCR" = true
+                    , "F_LOCK" = false
+                    , "TX_TEXT" = %s
+                    , "TX_VOCABULARY" = %s
+                where "ID_MEDIA_INTERNAL" = %s
+            """, (p_text, ' '.join(p_vocabulary), p_internal))
+            l_conn_write.commit()
+        except Exception as e:
+            l_conn_write.rollback()
+            l_msg = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
+            self.m_logger.warning(l_msg)
+            raise BulkDownloaderException(l_msg)
+        finally:
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        self.m_logger.info('update_media_ocr() start')
 
     @classmethod
     def get_optional_field(cls, p_json, p_field):
@@ -2873,51 +3148,10 @@ if __name__ == "__main__":
 
     random.seed()
 
-    # mailer init
-    EcMailer.init_mailer()
+    def raiser():
+        raise BulkDownloaderException('toto')
 
-    # test connection to PostgresQL and wait if unavailable
-    gcm_maxTries = 20
-    l_iter = 0
-    while True:
-        if l_iter >= gcm_maxTries:
-            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', 'l_iter = {0}'.format(l_iter))
-            sys.exit(0)
-
-        l_iter += 1
-
-        try:
-            l_connect0 = psycopg2.connect(
-                host=EcAppParam.gcm_dbServer,
-                database=EcAppParam.gcm_dbDatabase,
-                user=EcAppParam.gcm_dbUser,
-                password=EcAppParam.gcm_dbPassword
-            )
-
-            l_connect0.close()
-            break
-        except psycopg2.Error as e0:
-            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e0))
-            time.sleep(1)
-            continue
-
-    # logging system init
     try:
-        EcLogger.log_init()
-    except Exception as e0:
-        EcMailer.send_mail('Failed to initialize EcLogger', repr(e0))
-
-    l_phantomId0, l_phantomPwd0, l_vpn0 = 'nicolas.reimen@gmail.com', 'murugan!', None
-    # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
-
-    l_driver = BrowserDriver()
-    l_pool = EcConnectionPool.get_new()
-
-    l_driver.m_user_api = l_phantomId0
-    l_driver.m_pass_api = l_phantomPwd0
-
-    # l_downloader = BulkDownloader(l_driver, l_pool, l_phantomId0, l_phantomPwd0)
-    # l_downloader.bulk_download()
-
-    if EcAppParam.gcm_headless:
-        l_driver.close()
+        raiser()
+    except BulkDownloaderException as e0:
+        print(str(e0))

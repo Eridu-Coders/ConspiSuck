@@ -24,9 +24,7 @@ __author__ = 'Pavan Mahalingam'
 
 
 class BrowserDriverException(Exception):
-    def __init__(self, p_msg):
-        self.m_msg = p_msg
-
+    pass
 
 class BrowserDriver:
     """

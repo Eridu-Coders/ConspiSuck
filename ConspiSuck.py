@@ -75,22 +75,26 @@ class StartApp:
         l_parser.parse_args()
         l_parser.parse_args(namespace=c)
 
-        try:
-            # instantiate the app (and the connection pool within it)
-            l_app = CsApp(c.likes_proc, c.ocr_proc, c.get_pages)
-        except Exception as e:
-            EcMailer.send_mail('App class failed to instantiate.', repr(e))
-            sys.exit(0)
+        print('c.likes_proc : {0}'.format(c.likes_proc))
+        print('c.ocr_proc   : {0}'.format(c.ocr_proc))
+
+        # instantiate the app
+        l_app = CsApp(c.likes_proc, c.ocr_proc, c.get_pages)
+
+        print('CsApp instantiated')
 
         # select the correct process launch method to avoid SSL issues in Psycopg2
-        multiprocessing.set_start_method('spawn')
+        # multiprocessing.set_start_method('spawn')
 
         # give one-letter name to current process
-        multiprocessing.current_process().name = 'M'
+        multiprocessing.current_process().name = 'Z'
+        threading.current_thread().name = 'µ'
 
+        print('Sub-processes start')
         l_app.start_processes()
 
         # Set-up mailer & EcLogger
+        print('Full init')
         GlobalStart.basic_env_start()
         l_app.full_init()
 

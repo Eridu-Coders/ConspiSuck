@@ -157,7 +157,7 @@ class CsBackgroundTask(threading.Thread):
             raise
 
 
-class CsApp(EcAppCore):
+class CsApp():
     """
     Main application class. Subclass of generic EC app class :any:`EcAppCore`
 
@@ -170,9 +170,10 @@ class CsApp(EcAppCore):
     """
 
     def __init__(self, p_likes_process_count, p_ocr_process_count, p_gat_pages):
-        super().__init__()
+        #: App core class (not subclassed)
+        self.m_app_core = None
 
-        #: local logger
+        #: logger
         self.m_logger = None
 
         if EcAppParam.gcm_startGathering:
@@ -184,6 +185,9 @@ class CsApp(EcAppCore):
     def full_init(self):
         # local logger
         self.m_logger = logging.getLogger('CsApp')
+
+        # instantiate app core
+        self.m_app_core = EcAppCore()
 
         # local logger for the background task
         self.m_background.full_init()
@@ -214,7 +218,7 @@ class CsApp(EcAppCore):
         self.m_logger.info('Background tasks thread started')
 
         # starting the generic app health check thread (as implemented in the parent's :any:`EcAppCore.run()`)
-        self.start()
+        self.m_app_core.start()
         self.m_logger.info('Health check thread started')
 
     def get_response_get(self, p_request_handler):
