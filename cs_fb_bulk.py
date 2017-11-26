@@ -1419,26 +1419,32 @@ class BulkDownloader:
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Write')
         l_cursor_write = l_conn_write.cursor()
 
-        try:
-            l_cursor_write.execute("""
-                UPDATE
-                    "TB_OBJ"
-                SET
-                    "F_LOCKED" = TRUE
-                WHERE
-                    "ID_INTERNAL" in ({0})
-            """.format(','.join([str(l_internal_id) for _, l_internal_id, _ in l_obj_list])))
+        def lock_unlock_batch(p_lock_value=True):
+            try:
+                l_cursor_write.execute("""
+                    update
+                        "TB_OBJ"
+                    set
+                        "F_LOCKED" = {0}
+                    where
+                        "ID_INTERNAL" in ({1})
+                """.format(
+                    'true' if p_lock_value else 'false',
+                    ','.join([str(l_internal_id0) for _, l_internal_id0, _ in l_obj_list])))
 
-            l_conn_write.commit()
-        except Exception as e:
-            l_conn_write.rollback()
-            l_msg = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(repr(e), l_cursor_write.query)
-            self.m_logger.critical(l_msg)
-            raise BulkDownloaderException(l_msg)
-        finally:
-            # release DB handles when finished
-            l_cursor_write.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+                l_conn_write.commit()
+            except Exception as e1:
+                l_conn_write.rollback()
+                l_msg0 = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(
+                    repr(e1), l_cursor_write.query)
+                self.m_logger.critical(l_msg0)
+                raise BulkDownloaderException(l_msg0)
+            finally:
+                # release DB handles when finished
+                l_cursor_write.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        lock_unlock_batch(p_lock_value=True)
 
         # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
         p_lock.release()
@@ -1469,6 +1475,7 @@ class BulkDownloader:
                     self.set_non_exist(l_id)
                     continue
                 else:
+                    lock_unlock_batch(p_lock_value=False)
                     raise
             # decode request's JSON response
             l_response_data = json.loads(l_response)
@@ -2999,7 +3006,7 @@ class BulkDownloader:
         self.m_logger.debug('End create_like_link()')
         return l_inserted
 
-    def set_like_flag(self, p_id):
+    def set_like_flag(self, p_id, p_unlock_only=False):
         """
         Sets a flag on an object to indicate that the like details have been fetched.
         
@@ -3014,10 +3021,12 @@ class BulkDownloader:
             l_cursor.execute("""
                 update "TB_OBJ"
                 set 
-                    "F_LIKE_DETAIL" = 'X',
+                    {0}
                     "F_LOCKED" = FALSE
                 where "ID" = %s
-            """, (p_id,))
+            """.format(
+                '"F_LIKE_DETAIL" = \'X\', ' if not p_unlock_only else ''
+            ), (p_id,))
             l_conn.commit()
         except Exception as e:
             l_conn.rollback()
