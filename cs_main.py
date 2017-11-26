@@ -50,11 +50,6 @@ class CsBackgroundTask(threading.Thread):
         #: flag to avoid launching OCR processes
         self.m_gat_pages = p_gat_pages
 
-        # Spell Checker should not complain ... Grrrr
-        self.m_long_token = "EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU" \
-                       "49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD"
-
-        self.m_long_token_expiry = datetime.datetime.strptime('21/12/2017', '%d/%m/%Y')
 
     def full_init(self):
         # Local logger
@@ -66,8 +61,6 @@ class CsBackgroundTask(threading.Thread):
         # instantiate the bulk downloader class
         try:
             self.m_bulk = BulkDownloader(
-                self.m_long_token,
-                self.m_long_token_expiry,
                 self.m_likes_process_count,
                 self.m_ocr_process_count,
                 self.m_gat_pages,

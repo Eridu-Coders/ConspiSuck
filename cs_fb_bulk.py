@@ -21,6 +21,7 @@ __author__ = 'Pavan Mahalingam'
 # sudo apt-get install python3-dev
 # sudo pip3 install tesserocr
 
+
 class BulkDownloaderException(Exception):
     pass
 
@@ -39,18 +40,10 @@ class BulkDownloader:
     """
     def __init__(
             self,
-            p_long_token,
-            p_long_token_expiry,
             p_likes_process_count,
             p_ocr_process_count,
             p_gat_pages,
             p_background_task):
-
-        #: Local copy of the FB long-duration access token.
-        self.m_long_token = p_long_token
-
-        #: Local copy of the FB long-duration access token expiry date
-        self.m_long_token_expiry = p_long_token_expiry
 
         #: process count for likes download
         self.m_likes_process_count = p_likes_process_count
@@ -105,6 +98,19 @@ class BulkDownloader:
 
         #: Boolean variable controlling the threads. When `False`, all threads stop.
         self.m_threads_proceed = True
+
+        # Spell Checker should not complain ... Grrrr
+        self.m_long_token = [
+            ('EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU' +
+             '49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD',
+                datetime.datetime.strptime('21/12/2017', '%d/%m/%Y')) ,
+            ('EAAVaTJxF5KoBALqGzY8z8q645BRmTqCobXcmoZBY1lTLNDRA9L3XAfqpbytb8QDjCsDFnCh0v39wg4F0kvOKao' +
+             'bWwZAVLzfIE3tm7RZCkLaTRBRnTjldcd7UvUXlyOdB8Opgsl90LSkMnFdOz6IDQnLPGGqQ5wBZB5Kz9YZCp6gZDZD',
+                datetime.datetime.strptime('25/01/2018', '%d/%m/%Y')),
+            ('EAAVaTJxF5KoBAJDZBC6W1QyWTktXgwTpM6ZC2UTBoq89KZA2LgAeA8ly9sPBZCSO2k7uFVLKO7acaq0SmGhOFT' +
+             'LGetWpTqieLgEli3lJLboyn2GSKiAiDjp5Gql0Ml2w75G6wmZCcZCgOOXJvqsOUSMLRuv0YIZAdIZD',
+             datetime.datetime.strptime('25/01/2018', '%d/%m/%Y'))
+        ]
 
         #: Dictionary of UNICODE ligatures, to make sure none are kept in OCR text
         self.m_lig_dict = {
@@ -307,7 +313,11 @@ class BulkDownloader:
 
             if self.m_gat_pages:
                 self.get_pages()
-            self.get_posts()
+
+            try:
+                self.get_posts()
+            except BulkDownloaderException as e:
+                self.m_logger.warning('bulk_download main loop exception: ' + repr(e))
 
             self.m_posts_update_thread.join()
             self.m_image_fetch_thread.join()
@@ -327,11 +337,10 @@ class BulkDownloader:
             'updated_time,with_tags,parent_id'
 
         # build the request
-        l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&access_token={3}&fields={4}'.format(
+        l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&fields={3}'.format(
             EcAppParam.gcm_api_version,
             '706557539525134',  # FB ID of page 'TestPage'
             EcAppParam.gcm_limit,
-            self.m_long_token,
             l_field_list)
 
         # perform the request
@@ -358,11 +367,10 @@ class BulkDownloader:
 
                     # new request to get the parent post (the original post, not the share)
                     l_request_post = \
-                        'https://graph.facebook.com/{0}/{1}?limit={2}&access_token={3}&fields={4}'.format(
+                        'https://graph.facebook.com/{0}/{1}?limit={2}&fields={3}'.format(
                             EcAppParam.gcm_api_version,
                             l_parent_id,
                             EcAppParam.gcm_limit,
-                            self.m_long_token,
                             l_field_list)
 
                     # perform the second request
@@ -502,11 +510,10 @@ class BulkDownloader:
                        'source,status_type,story,to,type,updated_time,with_tags'
 
         # API request: get all posts from the page :any:`p_id` in batches of size :any:`gcm_limit`
-        l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&access_token={3}&fields={4}'.format(
+        l_request = 'https://graph.facebook.com/{0}/{1}/feed?limit={2}&fields={3}'.format(
             EcAppParam.gcm_api_version,
             p_id,
             EcAppParam.gcm_limit,
-            self.m_long_token,
             l_field_list)
 
         # perform the request
@@ -699,7 +706,8 @@ class BulkDownloader:
 
     def get_parent_post(self, p_post_id, p_fb_parent_id):
         """
-        Gets data from the parent post of a post. Only the attachments are currently recorded.
+        Gets data from the parent post of a post. The attachment are currently recorded, as well as the author
+        (in case it is a page).
 
         :param p_post_id: ID of the post to which the attachments are to be linked.
         :param p_fb_parent_id: ID of the post from which the attachments are to be downloaded.
@@ -712,11 +720,10 @@ class BulkDownloader:
                        'source,status_type,story,to,type,updated_time,with_tags'
 
         # API request: get all posts from the page :any:`p_id` in batches of size :any:`gcm_limit`
-        l_request = 'https://graph.facebook.com/{0}/{1}/?limit={2}&access_token={3}&fields={4}'.format(
+        l_request = 'https://graph.facebook.com/{0}/{1}/?limit={2}&fields={3}'.format(
             EcAppParam.gcm_api_version,
             p_fb_parent_id,
             EcAppParam.gcm_limit,
-            self.m_long_token,
             l_field_list)
 
         # perform the request
@@ -751,6 +758,38 @@ class BulkDownloader:
         l_source, x = BulkDownloader.get_optional_field(l_response_data, 'source')
 
         l_status_type, x = BulkDownloader.get_optional_field(l_response_data, 'status_type')
+
+        # gets the author (FB user) of the post
+        if 'from' in l_response_data.keys():
+            l_user_id, x = BulkDownloader.get_optional_field(l_response_data['from'], 'id')
+            l_user_name, l_user_name_short = BulkDownloader.get_optional_field(l_response_data['from'], 'name')
+
+            if EcAppParam.gcm_verboseModeOn:
+                self.m_logger.info('   from        : {0} [{1}]'.format(l_user_name_short, l_user_id))
+
+            # API request: get metadata of poster to determine if it is a page
+            l_request_from = 'https://graph.facebook.com/{0}/{1}/?metadata=1'.format(
+                EcAppParam.gcm_api_version,
+                l_user_id)
+
+            # perform the request
+            try:
+                l_response_from = self.perform_request(l_request_from)
+            except BulkDownloaderException as e:
+                if str(e) == 'NON_EXIST':
+                    self.m_logger.warning('User ID {0} said by FB not to exist'.format(l_user_id))
+                    return
+                else:
+                    raise
+            # decode the JSON request response
+            l_response_data_from = json.loads(l_response_from)
+
+            if 'metadata' in l_response_data_from.keys():
+                l_type = l_response_data_from['metadata']['type']
+                self.m_logger.info('      type     : {0} FRMTYP'.format(l_type))
+
+            # store user data
+            self.store_user(l_user_id, l_user_name, l_post_date, '   ')
 
         l_properties = ''
         if 'properties' in l_response_data.keys():
@@ -806,11 +845,10 @@ class BulkDownloader:
         l_field_list = 'description,description_tags,media,target,title,type,url,attachments,subattachments'
 
         # API request: get list of attachments linked to this post
-        l_request = 'https://graph.facebook.com/{0}/{1}/attachments?limit={2}&access_token={3}&fields={4}'.format(
+        l_request = 'https://graph.facebook.com/{0}/{1}/attachments?limit={2}&fields={3}'.format(
             EcAppParam.gcm_api_version,
             p_post_id,
             EcAppParam.gcm_limit,
-            self.m_long_token,
             l_field_list)
 
         # perform the request
@@ -962,11 +1000,10 @@ class BulkDownloader:
         # get list of comments attached to this post (or this comment)
         l_field_list = 'id,attachment,created_time,comment_count,from,like_count,message,message_tags,user_likes'
 
-        l_request = 'https://graph.facebook.com/{0}/{1}/comments?limit={2}&access_token={3}&fields={4}'.format(
+        l_request = 'https://graph.facebook.com/{0}/{1}/comments?limit={2}&fields={3}'.format(
             EcAppParam.gcm_api_version,
             p_id,
             EcAppParam.gcm_limit,
-            self.m_long_token,
             l_field_list)
 
         # perform request
@@ -1188,11 +1225,10 @@ class BulkDownloader:
                            'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
 
             # FB API request to get the data for this post
-            l_request = 'https://graph.facebook.com/{0}/{1}?limit={2}&access_token={3}&fields={4}'.format(
+            l_request = 'https://graph.facebook.com/{0}/{1}?limit={2}&fields={3}'.format(
                 EcAppParam.gcm_api_version,
                 l_post_id,
                 EcAppParam.gcm_limit,
-                self.m_long_token,
                 l_field_list)
 
             # perform request
@@ -1236,11 +1272,11 @@ class BulkDownloader:
             # FB API request to get post likes count (actually will get the first page of the full likes list
             # because there is no way to get the count by itself)
             l_request = \
-                'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}&summary=true'.format(
+                'https://graph.facebook.com/{0}/{1}/likes?limit={2}&summary=true'.format(
                     EcAppParam.gcm_api_version,
                     l_post_id,
                     25,
-                    self.m_long_token,
+                    
                     l_field_list)
 
             # performs the request
@@ -1418,11 +1454,10 @@ class BulkDownloader:
             self.m_logger.info('{0}/{1} {2} ----->'.format(l_obj_count, l_total_count, l_id))
 
             # FB API request to get the list of likes for the given object
-            l_request = 'https://graph.facebook.com/{0}/{1}/likes?limit={2}&access_token={3}'.format(
+            l_request = 'https://graph.facebook.com/{0}/{1}/likes?limit={2}'.format(
                 EcAppParam.gcm_api_version,
                 l_id,
-                EcAppParam.gcm_limit,
-                self.m_long_token)
+                EcAppParam.gcm_limit)
 
             # perform request
             try:
@@ -2336,7 +2371,12 @@ class BulkDownloader:
         self.m_logger.info('Start perform_request() Cycle: {0}'.format(
             self.m_FBRequestCount % EcAppParam.gcm_token_lifespan))
 
-        l_request = p_request
+        l_token = self.m_long_token[self.m_FBRequestCount % len(self.m_long_token)][0]
+
+        l_request = p_request + '&access_token={0}'.format(l_token)
+        l_request = re.sub(r'/&', '/?', l_request)  # in case there were no parameters at the end of the request
+
+        self.m_logger.debug('l_request : ' + l_request)
 
         # this used to be the token replacement code when short-duration tokens were used
 
