@@ -1377,6 +1377,7 @@ class BulkDownloader:
         self.m_logger.info('Start get_likes_detail()')
 
         # CRITICAL SECTION ENTRY --------------------------------------------------------------------------------------
+        self.m_logger.info('CS Entry ---------------')
         p_lock.acquire()
 
         # get DB connection and cursor
@@ -1409,6 +1410,8 @@ class BulkDownloader:
         except Exception as e:
             l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
             self.m_logger.critical(l_msg)
+            p_lock.release()
+            self.m_logger.info('CS Exit ---------------')
             raise BulkDownloaderException(l_msg)
         finally:
             # release DB handles when finished
@@ -1419,7 +1422,7 @@ class BulkDownloader:
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Write')
         l_cursor_write = l_conn_write.cursor()
 
-        def lock_unlock_batch(p_lock_value=True):
+        def lock_unlock_batch(p_lock_value=True, p_in_critical_section=True):
             try:
                 l_cursor_write.execute("""
                     update
@@ -1438,16 +1441,20 @@ class BulkDownloader:
                 l_msg0 = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(
                     repr(e1), l_cursor_write.query)
                 self.m_logger.critical(l_msg0)
+                if p_in_critical_section:
+                    p_lock.release()
+                    self.m_logger.info('CS Exit ---------------')
                 raise BulkDownloaderException(l_msg0)
             finally:
                 # release DB handles when finished
                 l_cursor_write.close()
                 EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
-        lock_unlock_batch(p_lock_value=True)
+        lock_unlock_batch(p_lock_value=True, p_in_critical_section=True)
 
         # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
         p_lock.release()
+        self.m_logger.info('CS Exit ---------------')
 
         # all non page objects older than gcm_likes_depth days and not already processed
         l_obj_count = 0
@@ -1475,7 +1482,7 @@ class BulkDownloader:
                     self.set_non_exist(l_id)
                     continue
                 else:
-                    lock_unlock_batch(p_lock_value=False)
+                    lock_unlock_batch(p_lock_value=False, p_in_critical_section=False)
                     raise
             # decode request's JSON response
             l_response_data = json.loads(l_response)
@@ -1871,6 +1878,7 @@ class BulkDownloader:
         l_debug_messages = False
 
         # CRITICAL SECTION ENTRY --------------------------------------------------------------------------------------
+        self.m_logger.info('CS Entry ---------')
         p_lock.acquire()
 
         # get 500 images (if available)
@@ -1904,6 +1912,7 @@ class BulkDownloader:
         except Exception as e:
             l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
             self.m_logger.warning(l_msg)
+            p_lock.release()
             raise BulkDownloaderException(l_msg)
         finally:
             # DB handles released after use
@@ -1928,6 +1937,7 @@ class BulkDownloader:
 
             l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
             self.m_logger.warning(l_msg)
+            p_lock.release()
             raise BulkDownloaderException(l_msg)
         finally:
             # DB handles released after use
@@ -1936,6 +1946,7 @@ class BulkDownloader:
 
         # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
         p_lock.release()
+        self.m_logger.info('CS Exit ---------')
 
         # image index within the batch
         l_img_count = 0
