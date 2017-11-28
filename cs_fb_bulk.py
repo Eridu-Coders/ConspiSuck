@@ -321,6 +321,7 @@ class BulkDownloader:
                 self.m_logger.warning('bulk_download main loop exception: ' + repr(e))
 
             self.m_logger.info('BOTBLK bottom of bulk_download() main loop')
+
             # sleep for an hour
             time.sleep(3600)
 
@@ -1131,6 +1132,7 @@ class BulkDownloader:
             l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.repeat_posts_update()')
             l_cursor = l_conn.cursor()
 
+            l_count = 0
             try:
                 l_cursor.execute("""
                     select count(1) as "COUNT"
@@ -1145,7 +1147,6 @@ class BulkDownloader:
                         and not "F_NON_EXIST"
                 """, (EcAppParam.gcm_days_depth,))
 
-                l_count = -1
                 for l_count, in l_cursor:
                     pass
 
@@ -1874,7 +1875,7 @@ class BulkDownloader:
                         and not "F_FROM_PARENT";
                 """)
 
-                for l_count in l_cursor:
+                for l_count, in l_cursor:
                     pass
 
                 self.m_logger.info('PRGMTR-O Images ready for OCR: {0}'.format(l_count))
