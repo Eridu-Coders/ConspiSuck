@@ -307,9 +307,10 @@ class BulkDownloader:
         if self.m_ocr_lock is not None:
             self.m_ocr_lock.release()
 
+        # Launch threads
+        self.start_threads()
         while True:
             self.m_logger.info('TOPBLK top of bulk_download() main loop')
-            self.start_threads()
 
             if self.m_gat_pages:
                 self.get_pages()
@@ -319,8 +320,9 @@ class BulkDownloader:
             except BulkDownloaderException as e:
                 self.m_logger.warning('bulk_download main loop exception: ' + repr(e))
 
-            self.m_posts_update_thread.join()
-            self.m_image_fetch_thread.join()
+            self.m_logger.info('BOTBLK bottom of bulk_download() main loop')
+            # sleep for an hour
+            time.sleep(3600)
 
     def get_pages(self):
         """
@@ -1125,8 +1127,7 @@ class BulkDownloader:
         :return: Nothing
         """
         self.m_logger.info('Start repeat_posts_update()')
-        l_finished = False
-        while self.m_threads_proceed and not l_finished:
+        while True:
             l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.repeat_posts_update()')
             l_cursor = l_conn.cursor()
 
@@ -1148,8 +1149,7 @@ class BulkDownloader:
                 for l_count, in l_cursor:
                     pass
 
-                self.m_logger.info('PRGMTR Posts to be updated: {0}'.format(l_count))
-                l_finished = l_count == 0
+                self.m_logger.info('PRGMTR-U Posts to be updated: {0}'.format(l_count))
             except Exception as e:
                 self.m_logger.critical('repeat_posts_update() Unknown Exception: {0}/{1}'.format(
                     repr(e), l_cursor.query))
@@ -1159,14 +1159,15 @@ class BulkDownloader:
                 l_cursor.close()
                 EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            if not l_finished:
+            if l_count > 0:
                 try:
                     self.update_posts()
                 except Exception as e:
-                    self.m_logger.warning(repr(e))
+                    self.m_logger.warning('Caught exception in repeat_posts_update() loop: ' + repr(e))
                 time.sleep(1)
-
-        self.m_logger.info('End repeat_posts_update()')
+            else:
+                # no posts to update --> wait 5 minutes
+                time.sleep(5 * 60)
 
     def update_posts(self):
         """
@@ -1351,7 +1352,7 @@ class BulkDownloader:
                 for l_count, in l_cursor:
                     pass
 
-                self.m_logger.info('PRGMTR posts ready for likes download: {0}'.format(l_count))
+                self.m_logger.info('PRGMTR-L posts ready for likes download: {0}'.format(l_count))
             except Exception as e:
                 l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
                 self.m_logger.critical(l_msg)
@@ -1364,10 +1365,12 @@ class BulkDownloader:
             if l_count > 0:
                 try:
                     self.get_likes_detail(p_lock)
+                    time.sleep(1)
                 except Exception as e:
                     self.m_logger.warning(repr(e))
-
-            time.sleep(1)
+            else:
+                # no likes details to download --> wait 5 minutes
+                time.sleep(5 * 60)
 
     def get_likes_detail(self, p_lock):
         """
@@ -1558,18 +1561,42 @@ class BulkDownloader:
         :return: Nothing 
         """
         self.m_logger.info('Start repeat_fetch_images()')
-        l_finished = False
-        while self.m_threads_proceed and not l_finished:
+        while True:
+            # get DB connection and cursor
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
+            l_cursor = l_conn.cursor()
+
             l_count = 0
             try:
-                l_count = self.fetch_images()
+                l_cursor.execute("""
+                    select count(1) as "COUNT" 
+                    from "TB_MEDIA"
+                    where not "F_LOADED" and not "F_ERROR";
+                """)
+
+                for l_count, in l_cursor:
+                    pass
+
+                self.m_logger.info('PRGMTR-I Images available for download: {0}'.format(l_count))
             except Exception as e:
-                self.m_logger.warning(repr(e))
+                l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+                self.m_logger.warning(l_msg)
+                raise BulkDownloaderException(l_msg)
+            finally:
+                # releases outer DB cursor and connection
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            l_finished = l_count == 0
-            time.sleep(1)
+            if l_count == 0:
+                # if there were no images to process --> wait 5 minutes
+                time.sleep(5 * 60)
+            else:
+                try:
+                    self.fetch_images()
+                except Exception as e:
+                    self.m_logger.warning('Caught error in repeat_fetch_images() loop: ' + repr(e))
 
-        self.m_logger.info('End repeat_fetch_images()')
+                time.sleep(1)
 
     def get_image(self, p_src, p_internal):
         """
@@ -1828,14 +1855,48 @@ class BulkDownloader:
         p_lock.acquire()
         p_lock.release()
 
-        while self.m_threads_proceed:
+        while True:
             self.m_logger.info('top of repeat_ocr_image() loop')
-            try:
-                self.ocr_images(p_lock)
-            except Exception as e:
-                self.m_logger.warning(repr(e))
+            l_count = 0
 
-            time.sleep(1)
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
+            l_cursor = l_conn.cursor()
+            try:
+                l_cursor.execute("""
+                    select count(1) as "COUNT"
+                    from 
+                        "TB_MEDIA"
+                    where 
+                        "F_LOADED" 
+                        and not "F_ERROR" 
+                        and not "F_OCR" 
+                        and not "F_LOCK"
+                        and not "F_FROM_PARENT";
+                """)
+
+                for l_count in l_cursor:
+                    pass
+
+                self.m_logger.info('PRGMTR-O Images ready for OCR: {0}'.format(l_count))
+            except Exception as e:
+                l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+                self.m_logger.warning(l_msg)
+                raise BulkDownloaderException(l_msg)
+            finally:
+                # DB handles released after use
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
+
+            if l_count == 0:
+                # no OCR --> wait 5 minutes
+                time.sleep(5 * 60)
+            else:
+                try:
+                    self.ocr_images(p_lock)
+                except Exception as e:
+                    self.m_logger.warning('Caught Exception in repeat_ocr_image() loop :' + repr(e))
+
+                time.sleep(1)
 
     def ocr_images(self, p_lock):
         """
@@ -1907,7 +1968,12 @@ class BulkDownloader:
                             where not "F_FROM_PARENT"
                             group by "ID_OWNER"
                         ) as "N" on "M"."ID_OWNER" = "N"."ID_OWNER"
-                    where "M"."F_LOADED" and not "M"."F_ERROR" and not "M"."F_OCR" and not "M"."F_LOCK"
+                    where 
+                        "M"."F_LOADED" 
+                        and not "M"."F_ERROR" 
+                        and not "M"."F_OCR" 
+                        and not "M"."F_LOCK"
+                        and not "M"."F_FROM_PARENT"
                     limit %s;
                 """, (l_max_img_count, ))
 
@@ -2384,6 +2450,7 @@ class BulkDownloader:
                 print('{0:4} {1}'.format(l_count, l_suf))
 
         self.m_logger.info('End ocr_images()')
+        return len(l_media_list)
 
     def perform_request(self, p_request):
         """
