@@ -493,6 +493,9 @@ class BulkDownloader:
             # get posts from the current page
             self.get_posts_from_page(l_id)
 
+            # Wait 1 second btw pages
+            time.sleep(1)
+
         self.m_logger.info('End get_posts()')
 
     def get_posts_from_page(self, p_id):
@@ -1380,81 +1383,81 @@ class BulkDownloader:
         self.m_logger.info('CS Entry ---------------')
         p_lock.acquire()
 
-        # get DB connection and cursor
-        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Read')
-        l_cursor = l_conn.cursor()
-
-        # get the list of objects that will be processed in this run (500 or less)
-        # l_total_count = 0
         l_obj_list = []
+        # try block to ensure that the CS lock will be released
         try:
-            l_cursor.execute("""
-                SELECT
-                    "ID", "ID_INTERNAL", "DT_CRE"
-                FROM
-                    "TB_OBJ"
-                WHERE
-                    "ST_TYPE" != 'Page'
-                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
-                    AND NOT "F_LOCKED"
-                    AND NOT "F_NON_EXIST"
-                    AND "F_LIKE_DETAIL" is null
-                LIMIT 500
-            """, (EcAppParam.gcm_likes_depth,))
+            # get DB connection and cursor
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Read')
+            l_cursor = l_conn.cursor()
 
-            for l_record in l_cursor:
-                l_obj_list.append(l_record)
-
-            # get the total count of objects that will be processed in this run (500 or less)
-            l_total_count = len(l_obj_list)
-        except Exception as e:
-            l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
-            self.m_logger.critical(l_msg)
-            p_lock.release()
-            self.m_logger.info('CS Exit ---------------')
-            raise BulkDownloaderException(l_msg)
-        finally:
-            # release DB handles when finished
-            l_cursor.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn)
-
-        # get DB connection and cursor
-        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Write')
-        l_cursor_write = l_conn_write.cursor()
-
-        def lock_unlock_batch(p_lock_value=True, p_in_critical_section=True):
+            # get the list of objects that will be processed in this run (500 or less)
+            # l_total_count = 0
             try:
-                l_cursor_write.execute("""
-                    update
+                l_cursor.execute("""
+                    SELECT
+                        "ID", "ID_INTERNAL", "DT_CRE"
+                    FROM
                         "TB_OBJ"
-                    set
-                        "F_LOCKED" = {0}
-                    where
-                        "ID_INTERNAL" in ({1})
-                """.format(
-                    'true' if p_lock_value else 'false',
-                    ','.join([str(l_internal_id0) for _, l_internal_id0, _ in l_obj_list])))
+                    WHERE
+                        "ST_TYPE" != 'Page'
+                        AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                        AND NOT "F_LOCKED"
+                        AND NOT "F_NON_EXIST"
+                        AND "F_LIKE_DETAIL" is null
+                    LIMIT 500
+                """, (EcAppParam.gcm_likes_depth,))
 
-                l_conn_write.commit()
-            except Exception as e1:
-                l_conn_write.rollback()
-                l_msg0 = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(
-                    repr(e1), l_cursor_write.query)
-                self.m_logger.critical(l_msg0)
-                if p_in_critical_section:
-                    p_lock.release()
-                    self.m_logger.info('CS Exit ---------------')
-                raise BulkDownloaderException(l_msg0)
+                for l_record in l_cursor:
+                    l_obj_list.append(l_record)
+
+                # get the total count of objects that will be processed in this run (500 or less)
+                l_total_count = len(l_obj_list)
+            except Exception as e:
+                l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
+                self.m_logger.critical(l_msg)
+                raise BulkDownloaderException(l_msg)
             finally:
                 # release DB handles when finished
-                l_cursor_write.close()
-                EcConnectionPool.get_global_pool().putconn(l_conn_write)
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
 
-        lock_unlock_batch(p_lock_value=True, p_in_critical_section=True)
+            # get DB connection and cursor
+            l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.get_likes_detail() Write')
+            l_cursor_write = l_conn_write.cursor()
 
-        # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
-        p_lock.release()
-        self.m_logger.info('CS Exit ---------------')
+            def lock_unlock_batch(p_lock_value=True):
+                try:
+                    l_cursor_write.execute("""
+                        update
+                            "TB_OBJ"
+                        set
+                            "F_LOCKED" = {0}
+                        where
+                            "ID_INTERNAL" in ({1})
+                    """.format(
+                        'true' if p_lock_value else 'false',
+                        ','.join([str(l_internal_id0) for _, l_internal_id0, _ in l_obj_list])))
+
+                    l_conn_write.commit()
+                except Exception as e1:
+                    l_conn_write.rollback()
+                    l_msg0 = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(
+                        repr(e1), l_cursor_write.query)
+                    self.m_logger.critical(l_msg0)
+                    raise BulkDownloaderException(l_msg0)
+                finally:
+                    # release DB handles when finished
+                    l_cursor_write.close()
+                    EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+            lock_unlock_batch(p_lock_value=True)
+        except Exception as e:
+            self.m_logger.info('Catching exception to ensure lock release :' + repr(e))
+            raise
+        finally:
+            # CRITICAL SECTION EXIT -----------------------------------------------------------------------------------
+            p_lock.release()
+            self.m_logger.info('CS Exit ---------------')
 
         # all non page objects older than gcm_likes_depth days and not already processed
         l_obj_count = 0
@@ -1482,7 +1485,7 @@ class BulkDownloader:
                     self.set_non_exist(l_id)
                     continue
                 else:
-                    lock_unlock_batch(p_lock_value=False, p_in_critical_section=False)
+                    lock_unlock_batch(p_lock_value=False)
                     raise
             # decode request's JSON response
             l_response_data = json.loads(l_response)
@@ -1881,72 +1884,77 @@ class BulkDownloader:
         self.m_logger.info('CS Entry ---------')
         p_lock.acquire()
 
-        # get 500 images (if available)
-        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
-        l_cursor = l_conn.cursor()
+        l_media_list = []
+        # try block to ensure that CS lock is released
         try:
-            l_cursor.execute("""
-                select 
-                    "M"."ID_MEDIA_INTERNAL"
-                    ,"M"."TX_MEDIA_SRC"
-                    ,"M"."TX_FULL_PICTURE" 
-                    ,"M"."TX_BASE64" 
-                    ,"M"."TX_BASE64_FP"
-                    ,"N"."ATT_COUNT" 
-                from 
-                    "TB_MEDIA" as "M"
-                    join (
-                        select "ID_OWNER", count(1) as "ATT_COUNT" 
-                        from "TB_MEDIA" 
-                        where not "F_FROM_PARENT"
-                        group by "ID_OWNER"
-                    ) as "N" on "M"."ID_OWNER" = "N"."ID_OWNER"
-                where "M"."F_LOADED" and not "M"."F_ERROR" and not "M"."F_OCR" and not "M"."F_LOCK"
-                limit %s;
-            """, (l_max_img_count, ))
+            # get 500 images (if available)
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
+            l_cursor = l_conn.cursor()
+            try:
+                l_cursor.execute("""
+                    select 
+                        "M"."ID_MEDIA_INTERNAL"
+                        ,"M"."TX_MEDIA_SRC"
+                        ,"M"."TX_FULL_PICTURE" 
+                        ,"M"."TX_BASE64" 
+                        ,"M"."TX_BASE64_FP"
+                        ,"N"."ATT_COUNT" 
+                    from 
+                        "TB_MEDIA" as "M"
+                        join (
+                            select "ID_OWNER", count(1) as "ATT_COUNT" 
+                            from "TB_MEDIA" 
+                            where not "F_FROM_PARENT"
+                            group by "ID_OWNER"
+                        ) as "N" on "M"."ID_OWNER" = "N"."ID_OWNER"
+                    where "M"."F_LOADED" and not "M"."F_ERROR" and not "M"."F_OCR" and not "M"."F_LOCK"
+                    limit %s;
+                """, (l_max_img_count, ))
 
-            l_media_list = []
-            for l_record in l_cursor:
-                l_media_list.append(l_record)
+                for l_record in l_cursor:
+                    l_media_list.append(l_record)
 
+            except Exception as e:
+                l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
+                self.m_logger.warning(l_msg)
+                raise BulkDownloaderException(l_msg)
+            finally:
+                # DB handles released after use
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
+
+            if len(l_media_list) > 0:
+                l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
+                l_cursor_write = l_conn_write.cursor()
+                try:
+                    l_cursor_write.execute("""
+                        update "TB_MEDIA"
+                        set "F_LOCK" = true
+                        where "ID_MEDIA_INTERNAL" in ({0});
+                            """.format(','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list])))
+
+                    l_conn_write.commit()
+                    self.m_logger.info('LCKOCR Marked {0} images as locked for OCR'.format(len(l_media_list)))
+                    # with open('tmp.sql', 'w') as f:
+                    #     f.write(l_cursor_write.query.decode('utf-8'))
+                except Exception as e:
+                    l_conn_write.rollback()
+
+                    l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
+                    self.m_logger.warning(l_msg)
+                    raise BulkDownloaderException(l_msg)
+                finally:
+                    # DB handles released after use
+                    l_cursor_write.close()
+                    EcConnectionPool.get_global_pool().putconn(l_conn_write)
+            # end: if len(l_media_list) > 0:
         except Exception as e:
-            l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
-            self.m_logger.warning(l_msg)
-            p_lock.release()
-            raise BulkDownloaderException(l_msg)
+            self.m_logger.info('Catching exception to ensure lock release: ' + repr(e))
+            raise
         finally:
-            # DB handles released after use
-            l_cursor.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn)
-
-        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.fetch_images()')
-        l_cursor_write = l_conn_write.cursor()
-        try:
-            l_cursor_write.execute("""
-                update "TB_MEDIA"
-                set "F_LOCK" = true
-                where "ID_MEDIA_INTERNAL" in ({0});
-                    """.format(','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list])))
-
-            l_conn_write.commit()
-            self.m_logger.info('LCKOCR Marked {0} images as locked for OCR'.format(len(l_media_list)))
-            # with open('tmp.sql', 'w') as f:
-            #     f.write(l_cursor_write.query.decode('utf-8'))
-        except Exception as e:
-            l_conn_write.rollback()
-
-            l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
-            self.m_logger.warning(l_msg)
+            # CRITICAL SECTION EXIT -----------------------------------------------------------------------------------
             p_lock.release()
-            raise BulkDownloaderException(l_msg)
-        finally:
-            # DB handles released after use
-            l_cursor_write.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn_write)
-
-        # CRITICAL SECTION EXIT ---------------------------------------------------------------------------------------
-        p_lock.release()
-        self.m_logger.info('CS Exit ---------')
+            self.m_logger.info('CS Exit ---------')
 
         # image index within the batch
         l_img_count = 0
@@ -3022,7 +3030,8 @@ class BulkDownloader:
         Sets a flag on an object to indicate that the like details have been fetched.
         
         :param p_id: API App-specific ID of the object.
-        :return: Nothing 
+        :param p_unlock_only:
+        :return: Nothing
         """
         self.m_logger.debug('Start set_like_flag()')
         l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.set_like_flag()')
