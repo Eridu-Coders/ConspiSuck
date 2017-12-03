@@ -94,7 +94,7 @@ class StartApp:
         l_app.start_processes()
 
         # Set-up mailer & EcLogger
-        print('Full init')
+        print('Full init from start_conspi_suck()')
         GlobalStart.basic_env_start()
         l_app.full_init()
 

@@ -49,7 +49,6 @@ class CsBackgroundTask(threading.Thread):
         #: flag to avoid launching OCR processes
         self.m_gat_pages = p_gat_pages
 
-
     def full_init(self):
         # Local logger
         self.m_logger = logging.getLogger('CsBackgroundTask')
@@ -57,6 +56,7 @@ class CsBackgroundTask(threading.Thread):
         self.m_bulk.full_init()
 
     def start_processes(self):
+        print('CsBackgroundTask.start_processes()')
         # instantiate the bulk downloader class
         try:
             self.m_bulk = BulkDownloader(

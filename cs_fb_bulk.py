@@ -182,6 +182,8 @@ class BulkDownloader:
 
         :return: Nothing.
         """
+        print('BulkDownloader.start_processes()')
+
         # likes details download processes
         self.m_likes_lock = multiprocessing.Lock()
         # lock is acquired to block the process start
@@ -207,9 +209,12 @@ class BulkDownloader:
 
             # self.m_logger.info('OCR process(es) launched')
 
+        print('BulkDownloader.start_processes() End')
+
     def full_init(self):
         # Local logger
         self.m_logger = logging.getLogger('BulkDownloader')
+        self.m_logger.info('BulkDownloader.full_init() End')
 
     def start_threads(self):
         """
@@ -247,46 +252,47 @@ class BulkDownloader:
 
         self.full_init()
 
-    def tasks_before_start(self):
+    def tasks_before_start(self, p_minimal=False):
         """
 
         :return:
         """
 
         # ConspiSuck DB Housekeeping queries --------------------------------------------------------------------------
-        with open(os.path.join(LocalParam.gcm_appRoot, 'housekeeping.sql'), 'r') as f:
-            for r in f.read().split(';'):
-                if r is not None:
-                    r = r.strip()
-                    if len(r) > 0:
-                        l_conn_write = EcConnectionPool.get_global_pool().getconn(
-                            'BulkDownloader.tasks_before_start() Housekeeping')
-                        l_cursor_write = l_conn_write.cursor()
+        if not p_minimal:
+            with open(os.path.join(LocalParam.gcm_appRoot, 'housekeeping.sql'), 'r') as f:
+                for r in f.read().split(';'):
+                    if r is not None:
+                        r = r.strip()
+                        if len(r) > 0:
+                            l_conn_write = EcConnectionPool.get_global_pool().getconn(
+                                'BulkDownloader.tasks_before_start() Housekeeping')
+                            l_cursor_write = l_conn_write.cursor()
 
-                        try:
-                            self.m_logger.info('Executing housekeeping request : ' + r)
-                            t0 = time.time()
-                            l_cursor_write.execute(r)
+                            try:
+                                self.m_logger.info('Executing housekeeping request : ' + r)
+                                t0 = time.time()
+                                l_cursor_write.execute(r)
 
-                            l_conn_write.commit()
-                            l_elapsed = time.time() - t0
-                            self.m_logger.info('Elapsed : {:,.2f} s.'.format(l_elapsed).replace(',', ' '))
-                        except Exception as e:
-                            l_conn_write.rollback()
-                            l_msg = 'bulk_download Unknown Exception (Housekeeping) : {0}/{1}'.format(
-                                repr(e),
-                                l_cursor_write.query)
-                            self.m_logger.critical(l_msg)
-                            raise BulkDownloaderException(l_msg)
-                        finally:
-                            # release DB handles when finished
-                            l_cursor_write.close()
-                            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+                                l_conn_write.commit()
+                                l_elapsed = time.time() - t0
+                                self.m_logger.info('Elapsed : {:,.2f} s.'.format(l_elapsed).replace(',', ' '))
+                            except Exception as e:
+                                l_conn_write.rollback()
+                                l_msg = 'bulk_download Unknown Exception (Housekeeping) : {0}/{1}'.format(
+                                    repr(e),
+                                    l_cursor_write.query)
+                                self.m_logger.critical(l_msg)
+                                raise BulkDownloaderException(l_msg)
+                            finally:
+                                # release DB handles when finished
+                                l_cursor_write.close()
+                                EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
-        self.m_logger.info('*** End Housekeeping Queries ***')
+            self.m_logger.info('*** End Housekeeping Queries ***')
 
         # System backup -----------------------------------------------------------------------------------------------
-        if LocalParam.gcm_doSystemBackup:
+        if LocalParam.gcm_doSystemBackup and not p_minimal:
             self.m_logger.info('*** Performing system backup ***')
             l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py -q'
             # l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py --dbOnly'
@@ -353,11 +359,22 @@ class BulkDownloader:
         self.m_logger.info('Start bulk_download()')
 
         # tasks to perform before starting actual bulk download process
-        self.tasks_before_start()
+        self.tasks_before_start(p_minimal=True)
 
         # release child processes
+        self.m_logger.info('Release likes processes')
         self.m_likes_lock.release()
+        time.sleep(1)
+        self.m_likes_lock.acquire()
+        self.m_logger.info('likes processes init complete')
+        self.m_likes_lock.release()
+
         if self.m_ocr_lock is not None:
+            self.m_logger.info('Release OCR processes')
+            self.m_ocr_lock.release()
+            time.sleep(1)
+            self.m_ocr_lock.acquire()
+            self.m_logger.info('OCR processes init complete')
             self.m_ocr_lock.release()
 
         # Launch threads
@@ -1393,14 +1410,13 @@ class BulkDownloader:
         :param p_lock: Lock protecting `F_LOCK` in `TB_OBJ`
         :return: Nothing
         """
-        # Env set-up after process start (logger & mailer)
-        self.new_process_init()
-
-        self.m_logger.info('Start repeat_get_likes_details()')
-
         # to block process start until released
         p_lock.acquire()
+        # Env set-up after process start (logger & mailer)
+        self.new_process_init()
+        self.m_logger.info('repeat_get_likes_details() released')
         p_lock.release()
+        time.sleep(1)
 
         while True:
             # get the total count of objects that remains to be processed
@@ -1922,14 +1938,14 @@ class BulkDownloader:
         :param p_lock: Lock protecting `F_LOCK` in `TB_MEDIA`
         :return: Nothing
         """
-        # set-up logging environment, etc
-        self.new_process_init()
-
-        self.m_logger.info('Start repeat_ocr_image()')
 
         # to block process start until released
         p_lock.acquire()
+        # set-up logging environment, etc
+        self.new_process_init()
+        self.m_logger.info('repeat_ocr_image() released')
         p_lock.release()
+        time.sleep(1)
 
         while True:
             self.m_logger.info('top of repeat_ocr_image() loop')
