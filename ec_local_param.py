@@ -9,6 +9,8 @@ class LocalParamGeneral:
     gcm_prodEnv = False
     #: global root path
     gcm_appRoot = '/home/fi11222/disk-partage/Dev/ConspiSuck/'
+    #: True --> Perform system backup on startup
+    gcm_doSystemBackup = False
 
 
 # HTTP server parameters

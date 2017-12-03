@@ -6,6 +6,7 @@ from PIL import ImageEnhance, ImageFilter
 import json
 import base64
 import socket
+import subprocess
 from tesserocr import PyTessBaseAPI, RIL
 
 from cs_fb_connect import *
@@ -246,16 +247,57 @@ class BulkDownloader:
 
         self.full_init()
 
-    def bulk_download(self):
+    def tasks_before_start(self):
         """
-        Performs the core of the bulk-downloading tasks: New pages and new posts downloading.
-        
-        :return: Nothing
-        """
-        self.m_logger.info('Start bulk_download()')
 
-        # clear the locking flags
-        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.bulk_download() TB_OBJ')
+        :return:
+        """
+
+        # ConspiSuck DB Housekeeping queries --------------------------------------------------------------------------
+        with open(os.path.join(LocalParam.gcm_appRoot, 'housekeeping.sql'), 'r') as f:
+            for r in f.read().split(';'):
+                if r is not None:
+                    r = r.strip()
+                    if len(r) > 0:
+                        l_conn_write = EcConnectionPool.get_global_pool().getconn(
+                            'BulkDownloader.tasks_before_start() Housekeeping')
+                        l_cursor_write = l_conn_write.cursor()
+
+                        try:
+                            self.m_logger.info('Executing housekeeping request : ' + r)
+                            t0 = time.time()
+                            l_cursor_write.execute(r)
+
+                            l_conn_write.commit()
+                            l_elapsed = time.time() - t0
+                            self.m_logger.info('Elapsed : {:,.2f} s.'.format(l_elapsed).replace(',', ' '))
+                        except Exception as e:
+                            l_conn_write.rollback()
+                            l_msg = 'bulk_download Unknown Exception (Housekeeping) : {0}/{1}'.format(
+                                repr(e),
+                                l_cursor_write.query)
+                            self.m_logger.critical(l_msg)
+                            raise BulkDownloaderException(l_msg)
+                        finally:
+                            # release DB handles when finished
+                            l_cursor_write.close()
+                            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        self.m_logger.info('*** End Housekeeping Queries ***')
+
+        # System backup -----------------------------------------------------------------------------------------------
+        if LocalParam.gcm_doSystemBackup:
+            self.m_logger.info('*** Performing system backup ***')
+            l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py -q'
+            # l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py --dbOnly'
+            try:
+                subprocess.call(l_bkp_cmd.split(' '))
+            except subprocess.CalledProcessError as e:
+                self.m_logger.warning('System backup - Error return code: {0}'.format(e.returncode))
+            self.m_logger.info('*** End system backup ***')
+
+        # clear the locking flags -------------------------------------------------------------------------------------
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.tasks_before_start() TB_OBJ')
         l_cursor_write = l_conn_write.cursor()
 
         self.m_logger.info('Cleaning locks on TB_OBJ')
@@ -279,7 +321,7 @@ class BulkDownloader:
             l_cursor_write.close()
             EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
-        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.bulk_download() TB_MEDIA')
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.tasks_before_start() TB_MEDIA')
         l_cursor_write = l_conn_write.cursor()
 
         try:
@@ -302,6 +344,17 @@ class BulkDownloader:
             l_cursor_write.close()
             EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
+    def bulk_download(self):
+        """
+        Performs the core of the bulk-downloading tasks: New pages and new posts downloading.
+        
+        :return: Nothing
+        """
+        self.m_logger.info('Start bulk_download()')
+
+        # tasks to perform before starting actual bulk download process
+        self.tasks_before_start()
+
         # release child processes
         self.m_likes_lock.release()
         if self.m_ocr_lock is not None:
@@ -309,6 +362,8 @@ class BulkDownloader:
 
         # Launch threads
         self.start_threads()
+
+        # ############################################ MAIN LOOP ######################################################
         while True:
             self.m_logger.info('TOPBLK top of bulk_download() main loop')
 
@@ -324,6 +379,7 @@ class BulkDownloader:
 
             # sleep for an hour
             time.sleep(3600)
+        # ############################################ END MAIN LOOP ##################################################
 
     def get_pages(self):
         """
@@ -792,7 +848,7 @@ class BulkDownloader:
 
             if 'metadata' in l_response_data_from.keys():
                 l_type = l_response_data_from['metadata']['type']
-                self.m_logger.info('      type     : {0} FRMTYP'.format(l_type))
+                self.m_logger.info('      type     : {0} FRMTYP [{1}]'.format(l_type, l_user_name))
 
             # store user data
             self.store_user(l_user_id, l_user_name, l_post_date, '   ')

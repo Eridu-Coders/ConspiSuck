@@ -118,9 +118,9 @@ class EcLogger(logging.Logger):
                     'Sent from EcLogger.logInit\n' + EcConnectionPool.get_psycopg2_error_block(e)
                 )
                 raise
-
-            l_cursor.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn)
+            finally:
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
 
         # Creates the column headers for the CSV log file
         if LocalParam.gcm_debugToCSV:
@@ -568,13 +568,13 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
             )
         except psycopg2.Error as e:
             EcMailer.send_mail(
-                'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
+                'Connection pool init failure: {0}'.format(repr(e)),
                 'Sent from EcConnectionPool.get_new\n' + EcConnectionPool.get_psycopg2_error_block(e)
             )
             raise
         except Exception as e:
             EcMailer.send_mail(
-                'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
+                'Connection pool init failure: {0}'.format(repr(e)),
                 'Non psycopg2 error'
             )
             raise

@@ -12,7 +12,6 @@ import collections
 __author__ = 'Pavan Mahalingam'
 
 # TODO: Warning message when approaching token end of life
-# TODO: Move database to other disk
 
 
 class CsBackgroundTask(threading.Thread):
@@ -587,7 +586,7 @@ class CsApp():
                     cut_max(l_user_name, 25),
                     l_likes,
                     l_shares,
-                    l_comm_count,
+                    l_comm_count if l_comm_count is not None else '',
                     ('{0}'.format(l_media_count) if l_media_count is not None else '') +
                         ('*' if l_ocr_count is not None and l_ocr_count > 0 else ''),
                     l_display_text
