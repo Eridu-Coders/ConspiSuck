@@ -390,6 +390,8 @@ class BulkDownloader:
                         subprocess.call('shutdown -r now'.split(' '))
                     except subprocess.CalledProcessError as e:
                         self.m_logger.warning('Failed to reboot the system: {0}'.format(e.returncode))
+                else:
+                    self.m_logger.info('*** NRBOOT Already rebooted ***')
 
             self.m_logger.info('BOTBLK bottom of bulk_download() main loop')
 
