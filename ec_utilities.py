@@ -110,6 +110,12 @@ class EcLogger(logging.Logger):
             l_conn = EcConnectionPool.get_global_pool().getconn('EcLogger.log_init()')
             l_cursor = l_conn.cursor()
             try:
+                l_cursor.execute('delete from "TB_EC_DEBUG_BKP"')
+                l_conn.commit()
+
+                l_cursor.execute('insert into "TB_EC_DEBUG_BKP" select * from "TB_EC_DEBUG"')
+                l_conn.commit()
+
                 l_cursor.execute('delete from "TB_EC_DEBUG"')
                 l_conn.commit()
             except psycopg2.Error as e:

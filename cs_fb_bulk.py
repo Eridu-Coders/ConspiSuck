@@ -363,6 +363,10 @@ class BulkDownloader:
         # Launch threads
         self.start_threads()
 
+        l_reboot_path = os.path.join(LocalParam.gcm_appRoot, EcAppParam.gcm_rebootFile)
+        with open(l_reboot_path, 'w') as f:
+            f.write(datetime.datetime.now().strftime('%Y%m%d'))
+
         # ############################################ MAIN LOOP ######################################################
         while True:
             self.m_logger.info('TOPBLK top of bulk_download() main loop')
@@ -373,7 +377,19 @@ class BulkDownloader:
             try:
                 self.get_posts()
             except BulkDownloaderException as e:
-                self.m_logger.warning('bulk_download main loop exception: ' + repr(e))
+                self.m_logger.warning('bulk_download main loop exception capture: ' + repr(e))
+
+            # reboot ?
+            if LocalParam.gcm_prodEnv and 2 <= datetime.datetime.now().hour <= 6:
+                with open(l_reboot_path, 'r') as f:
+                    l_already_rebooted = f.read() == datetime.datetime.now().strftime('%Y%m%d')
+
+                if not l_already_rebooted:
+                    self.m_logger.info('*** REBOOT System reboot ***')
+                    try:
+                        subprocess.call('shutdown -r now'.split(' '))
+                    except subprocess.CalledProcessError as e:
+                        self.m_logger.warning('Failed to reboot the system: {0}'.format(e.returncode))
 
             self.m_logger.info('BOTBLK bottom of bulk_download() main loop')
 

@@ -52,6 +52,8 @@ class EcAppParamGeneral(LocalParam):
     gcm_appVersion = '0.0.0'
     #: App description (used in title of HTML pages ...)
     gcm_appTitle = 'FB scraping of conspirationist pages'
+    #: File name of the reboot file
+    gcm_rebootFile = 'reboot.txt'
 
 
 # HTTP server parameters -------------------------------------------------------------------------------------------
