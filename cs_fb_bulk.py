@@ -1745,9 +1745,10 @@ class BulkDownloader:
                 self.m_logger.info('--> [{0}] {1}'.format(l_fmt, l_img))
 
                 # save image locally
-                l_img_content.save(os.path.join('./images_fb', l_img))
-                l_step = 30
-                self.m_logger.info('Saved')
+                if not LocalParam.gcm_prodEnv:
+                    l_img_content.save(os.path.join('./images_fb', l_img))
+                    self.m_logger.debug('Saved')
+                    l_step = 30
 
                 # converts image to a base64 string
                 l_output_buffer = io.BytesIO()
