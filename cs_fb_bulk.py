@@ -2029,7 +2029,8 @@ class BulkDownloader:
         l_clip = 2
 
         # the temp directory for the ocr operations
-        l_img_path = './images_ocr'
+        l_img_path = os.path.join(LocalParam.gcm_appRoot, 'images_ocr')
+        self.m_logger.info('OCR images path : ' + l_img_path)
         # controls the display of extra debug messages
         l_debug_messages = False
 
