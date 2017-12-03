@@ -359,7 +359,7 @@ class BulkDownloader:
         self.m_logger.info('Start bulk_download()')
 
         # tasks to perform before starting actual bulk download process
-        self.tasks_before_start(p_minimal=True)
+        self.tasks_before_start(p_minimal=not LocalParam.gcm_prodEnv)
 
         # release child processes
         self.m_logger.info('Release likes processes')
