@@ -404,7 +404,8 @@ class BulkDownloader:
                 if not l_already_rebooted:
                     self.m_logger.info('*** REBOOT System reboot ***')
                     try:
-                        subprocess.call('shutdown -r now'.split(' '))
+                        os.system('shutdown -r now')
+                        # subprocess.call('shutdown -r now'.split(' '))
                     except subprocess.CalledProcessError as e:
                         self.m_logger.warning('Failed to reboot the system: {0}'.format(e.returncode))
                 else:
