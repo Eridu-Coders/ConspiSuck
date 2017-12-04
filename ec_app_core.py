@@ -46,9 +46,11 @@ class EcAppCore(threading.Thread):
                     "ST_FILENAME",
                     "ST_FUNCTION",
                     "N_LINE",
-                    "TX_MSG"
+                    "TX_MSG",
+                    "ST_ENV",
+                    "DT_MSG"
                 )
-                values(%s, %s, %s, %s, %s, %s, %s);
+                values(%s, %s, %s, %s, %s, %s, %s, %s, %s);
             """, (
                 'xxx',
                 'XXX',
@@ -59,7 +61,9 @@ class EcAppCore(threading.Thread):
                 '{0} v. {1} starting'.format(
                     EcAppParam.gcm_appName,
                     EcAppParam.gcm_appVersion
-                )
+                ),
+                'PRD' if LocalParam.gcm_prodEnv else 'DEV',
+                datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone))
             ))
             l_conn.commit()
         except psycopg2.IntegrityError as e:
@@ -187,9 +191,11 @@ class EcAppCore(threading.Thread):
                         "ST_FILENAME",
                         "ST_FUNCTION",
                         "N_LINE",
-                        "TX_MSG"
+                        "TX_MSG",
+                        "ST_ENV",
+                        "DT_MSG"
                     )
-                    values(%s, %s, %s, %s, %s, %s, %s, %s);
+                    values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
                 """, (
                     'HLTH',
                     'xxx',
@@ -200,7 +206,9 @@ class EcAppCore(threading.Thread):
                     0,
                     'MEM: {0}/CPU: {1}/SWAP: {2}/DISK(root): {3}/NET: {4}/PROCESSES: {5}'.format(
                         l_mem, l_cpu, l_swap, l_disk_root, l_net, l_process_count
-                    )
+                    ),
+                    'PRD' if LocalParam.gcm_prodEnv else 'DEV',
+                    datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone))
                 ))
                 l_conn.commit()
             except Exception as e:

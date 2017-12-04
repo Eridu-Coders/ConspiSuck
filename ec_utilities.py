@@ -159,7 +159,10 @@ class EcLogger(logging.Logger):
             l_cursor1 = l_conn1.cursor()
             try:
                 l_cursor1.execute("""
-                        insert into "{0}"( {1}
+                        insert into "{0}"( 
+                            {1}
+                            {2}
+                            {3}
                             "ST_NAME",
                             "ST_LEVEL",
                             "ST_MODULE",
@@ -168,16 +171,18 @@ class EcLogger(logging.Logger):
                             "N_LINE",
                             "TX_MSG", 
                             "ST_THREAD",
-                            "ST_PROCESS"{3}
+                            "ST_PROCESS"
                         )
-                        values({2}%s, %s, %s, %s, %s, %s, %s, %s, %s{4});
+                        values({4}{5}%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
                     """.format(
                         p_table,
                         '"ST_TYPE", ' if p_table == 'TB_EC_MSG' else '',
+                        '"ST_ENV", ' if p_table == 'TB_EC_MSG' else '',
+                        '"DT_MSG", ' if p_table == 'TB_EC_MSG' else '"DT_CRE", ',
                         "'LOG', " if p_table == 'TB_EC_MSG' else '',
-                        ', "ST_ENV"' if p_table == 'TB_EC_MSG' else '',
-                        ", '{0}'".format(l_env_code) if p_table == 'TB_EC_MSG' else ''
+                        "'{0}', ".format(l_env_code) if p_table == 'TB_EC_MSG' else ''
                 ), (
+                    datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)),
                     p_record.name,
                     p_record.levelname,
                     p_record.module,
@@ -229,16 +234,17 @@ class EcLogger(logging.Logger):
             def format(self, p_record):
                 l_formatted = super().format(p_record)
 
-                if LocalParam.gcm_warningsToMail and p_record.levelno >= logging.WARNING:
+                if p_record.levelno >= logging.WARNING:
                     # send mail
-                    EcMailer.send_mail(
-                        '{0}-{1}[{2}]/{3}'.format(
-                            p_record.levelname,
-                            p_record.module,
-                            p_record.lineno,
-                            p_record.funcName),
-                        l_formatted
-                    )
+                    if LocalParam.gcm_warningsToMail:
+                        EcMailer.send_mail(
+                            '{0}-{1}[{2}]/{3}'.format(
+                                p_record.levelname,
+                                p_record.module,
+                                p_record.lineno,
+                                p_record.funcName),
+                            l_formatted
+                        )
 
                     db_output(p_record, 'TB_EC_MSG')
 
