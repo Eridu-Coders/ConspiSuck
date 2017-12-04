@@ -113,6 +113,9 @@ class BulkDownloader:
              datetime.datetime.strptime('25/01/2018', '%d/%m/%Y'))
         ]
 
+        #: reboot required flag
+        self.must_reboot = False
+
         #: Dictionary of UNICODE ligatures, to make sure none are kept in OCR text
         self.m_lig_dict = {
             'Ꜳ': 'AA',
@@ -397,7 +400,8 @@ class BulkDownloader:
                 self.m_logger.warning('bulk_download main loop exception capture: ' + repr(e))
 
             # reboot ?
-            if LocalParam.gcm_prodEnv and 2 <= datetime.datetime.now().hour <= 6:
+            if self.must_reboot:
+                # no more than one reboot per day
                 with open(l_reboot_path, 'r') as f:
                     l_already_rebooted = f.read() == datetime.datetime.now().strftime('%Y%m%d')
 
@@ -411,11 +415,20 @@ class BulkDownloader:
                 else:
                     self.m_logger.info('*** NRBOOT Already rebooted ***')
 
+                self.must_reboot = False
+
             self.m_logger.info('BOTBLK bottom of bulk_download() main loop')
 
             # sleep for an hour
             time.sleep(3600)
         # ############################################ END MAIN LOOP ##################################################
+
+    def reboot_trigger(self):
+        """
+
+        :return:
+        """
+        self.must_reboot = True
 
     def get_pages(self):
         """

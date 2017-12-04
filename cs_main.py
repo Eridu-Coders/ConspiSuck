@@ -148,8 +148,15 @@ class CsBackgroundTask(threading.Thread):
             self.m_logger.warning('Serious exception - Raising: ' + repr(e))
             raise
 
+    def reboot_trigger(self):
+        """
 
-class CsApp():
+        :return:
+        """
+        self.m_bulk.reboot_trigger()
+
+
+class CsApp:
     """
     Main application class. Subclass of generic EC app class :any:`EcAppCore`
 
@@ -174,6 +181,9 @@ class CsApp():
         else:
             self.m_background = None
 
+        #: reboot trigger thread
+        self.m_reboot_thread = None
+
     def full_init(self):
         # local logger
         self.m_logger = logging.getLogger('CsApp')
@@ -182,10 +192,12 @@ class CsApp():
         self.m_app_core = EcAppCore()
 
         # local logger for the background task
-        self.m_background.full_init()
+        if self.m_background is not None:
+            self.m_background.full_init()
 
     def start_processes(self):
-        self.m_background.start_processes()
+        if self.m_background is not None:
+            self.m_background.start_processes()
 
     def start_threads(self):
         """
@@ -201,17 +213,41 @@ class CsApp():
         * `L`: likes details download thread (started in :any:`BulkDownloader.start_threads`)
         * `I`: images download thread (started in :any:`BulkDownloader.start_threads`)
         * `O`: images OCR thread (started in :any:`BulkDownloader.start_threads`)
+        * `r`: reboot trigger thread
 
         :return: Nothing
         """
 
         # starting the background tasks thread (will start the bulk download threads)
-        self.m_background.start()
-        self.m_logger.info('Background tasks thread started')
+        if self.m_background is not None:
+            self.m_background.start()
+            self.m_logger.info('Background tasks thread started')
 
         # starting the generic app health check thread (as implemented in the parent's :any:`EcAppCore.run()`)
         self.m_app_core.start()
         self.m_logger.info('Health check thread started')
+
+        # Reboot decision
+        self.m_reboot_thread = Thread(target=self.reboot_check)
+        # One-letter name for the posts update thread
+        self.m_reboot_thread.name = 'r'
+        self.m_reboot_thread.start()
+        self.m_logger.info('Reboot trigger thread launched')
+
+    def reboot_check(self):
+        """
+
+        :return:
+        """
+
+        while True:
+            l_time_string = datetime.datetime.now().strftime('%H:%M')
+            if not LocalParam.gcm_prodEnv:
+                self.m_logger.info('l_time_string: ' + l_time_string)
+            if l_time_string == '02:30':
+                self.m_background.reboot_trigger()
+
+            time.sleep(20)
 
     def get_response_get(self, p_request_handler):
         """
@@ -220,9 +256,6 @@ class CsApp():
         :param p_request_handler: an :any:`EcRequestHandler` instance providing the HTTP request parameters.
         :return: A string containing the HTML of the response
         """
-        # completely useless line. Only there to avoid PEP-8 pedantic complaint
-        self.m_rq = p_request_handler
-
         self.m_logger.info('request: ' + p_request_handler.path)
         if p_request_handler.path == '/test':
             return """

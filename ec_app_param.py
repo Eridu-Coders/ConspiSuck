@@ -7,38 +7,6 @@ from ec_local_param import LocalParam
 __author__ = 'Pavan Mahalingam'
 
 
-class EcAppParamOld:
-    """
-    Static class containing all the global parameters which do not depend on the environment (dev/qualif/prod).
-    """
-
-    # transfer of local params from LocalParam to EcAppParam
-    gcm_prodEnv = LocalParam.gcm_prodEnv
-    gcm_appDomain = LocalParam.gcm_appDomain
-    gcm_httpPort = LocalParam.gcm_httpPort
-    gcm_dbServer = LocalParam.gcm_dbServer
-    gcm_dbUserLocal = LocalParam.gcm_dbUserLocal
-    gcm_dbPasswordLocal = LocalParam.gcm_dbPasswordLocal
-    gcm_debugModeOn = LocalParam.gcm_debugModeOn
-    gcm_verboseModeOn = LocalParam.gcm_verboseModeOn
-    gcm_mailSender = LocalParam.gcm_mailSender
-    gcm_smtpServer = LocalParam.gcm_smtpServer
-    gcm_amazonSmtp = LocalParam.gcm_amazonSmtp
-    gcm_sesIamUser = LocalParam.gcm_sesIamUser
-    gcm_sesUserName = LocalParam.gcm_sesUserName
-    gcm_sesPassword = LocalParam.gcm_sesPassword
-    gcm_appRoot = LocalParam.gcm_appRoot
-    gcm_gmailSmtp = LocalParam.gcm_gmailSmtp
-    gcm_mailSenderPassword = LocalParam.gcm_mailSenderPassword
-    gcm_browser = LocalParam.gcm_browser
-    gcm_headless = LocalParam.gcm_headless
-    gcm_expansionCount = LocalParam.gcm_expansionCount
-    gcm_max_story_count = LocalParam.gcm_max_story_count
-    gcm_getImages = LocalParam.gcm_getImages
-    gcm_startGathering = LocalParam.gcm_startGathering
-    gcm_debugToDB = LocalParam.gcm_debugToDB
-
-
 # general parameters -----------------------------------------------------------------------------------------------
 class EcAppParamGeneral(LocalParam):
     """
@@ -54,6 +22,8 @@ class EcAppParamGeneral(LocalParam):
     gcm_appTitle = 'FB scraping of conspirationist pages'
     #: File name of the reboot file
     gcm_rebootFile = 'reboot.txt'
+    #: Local time zone
+    gcm_timeZone = 'Asia/Calcutta'
 
 
 # HTTP server parameters -------------------------------------------------------------------------------------------

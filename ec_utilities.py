@@ -105,18 +105,22 @@ class EcLogger(logging.Logger):
         DEBUG level messages, if any, are sent to the CSV file.
         """
 
+        l_debug_table = 'TB_EC_DEBUG' if LocalParam.gcm_prodEnv else 'TB_EC_DEBUG_DEV'
+        l_env_code = 'PRD' if LocalParam.gcm_prodEnv else 'DEV'
+
         # purge TB_EC_DEBUG
         if p_purge:
             l_conn = EcConnectionPool.get_global_pool().getconn('EcLogger.log_init()')
             l_cursor = l_conn.cursor()
             try:
-                l_cursor.execute('delete from "TB_EC_DEBUG_BKP"')
+                l_cursor.execute('delete from "TB_EC_DEBUG_BKP" where "ST_ENV" = \'{0}\''.format(l_env_code))
                 l_conn.commit()
 
-                l_cursor.execute('insert into "TB_EC_DEBUG_BKP" select * from "TB_EC_DEBUG"')
+                l_cursor.execute('insert into "TB_EC_DEBUG_BKP" select *, \'{0}\' from "{1}"'.format(
+                    l_env_code, l_debug_table))
                 l_conn.commit()
 
-                l_cursor.execute('delete from "TB_EC_DEBUG"')
+                l_cursor.execute('delete from "{0}"'.format(l_debug_table))
                 l_conn.commit()
             except psycopg2.Error as e:
                 EcMailer.send_mail(
@@ -164,13 +168,15 @@ class EcLogger(logging.Logger):
                             "N_LINE",
                             "TX_MSG", 
                             "ST_THREAD",
-                            "ST_PROCESS"
+                            "ST_PROCESS"{3}
                         )
-                        values({2}%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                        values({2}%s, %s, %s, %s, %s, %s, %s, %s, %s{4});
                     """.format(
                         p_table,
                         '"ST_TYPE", ' if p_table == 'TB_EC_MSG' else '',
-                        "'LOG', " if p_table == 'TB_EC_MSG' else ''
+                        "'LOG', " if p_table == 'TB_EC_MSG' else '',
+                        ', "ST_ENV"' if p_table == 'TB_EC_MSG' else '',
+                        ", '{0}'".format(l_env_code) if p_table == 'TB_EC_MSG' else ''
                 ), (
                     p_record.name,
                     p_record.levelname,
@@ -214,7 +220,7 @@ class EcLogger(logging.Logger):
 
                 if LocalParam.gcm_debugToDB:
                     # log message in TB_EC_DEBUG
-                    db_output(p_record, 'TB_EC_DEBUG')
+                    db_output(p_record, l_debug_table)
 
                 return re.sub('\s+', ' ', super().format(l_record))
 
@@ -365,7 +371,7 @@ class EcMailer(threading.Thread):
         """.format(
             EcAppParam.gcm_mailSender,
             ', '.join(EcAppParam.gcm_mailRecipients),
-            email.utils.format_datetime(datetime.datetime.now(tz=pytz.utc)),
+            email.utils.format_datetime(datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone))),
             self.m_subject,
             self.m_message
         )
@@ -476,7 +482,7 @@ class EcMailer(threading.Thread):
             # LOGGER_NAME;TIME;LEVEL;MODULE;FILE;FUNCTION;LINE;MESSAGE
             l_f_log.write(
                 'EcMailer;{0};CRITICAL;ec_utilities;ec_utilities.py;sendMail;0;{1}-{2} [step = {3}]\n'.format(
-                    datetime.datetime.now(tz=pytz.utc).strftime('%Y-%m-%d %H:%M.%S'),
+                    datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)).strftime('%Y-%m-%d %H:%M.%S'),
                     type(l_exception).__name__,
                     re.sub('\s+', ' ', repr(l_exception)),
                     l_step_passed
@@ -682,7 +688,7 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
         :return: The report string.
         """
         l_report = '[{0}] get/put: {1}/{2}\n'.format(
-            datetime.datetime.now(tz=pytz.utc),
+            datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)),
             self.m_getCalls, self.m_putCalls
         )
 
@@ -720,7 +726,7 @@ class EcConnection(psycopg2.extensions.connection):
         self.m_debugData = 'Fresh'
 
         #: Self explanatory
-        self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
+        self.m_creationDate = datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone))
 
         #: Self explanatory
         self.m_connectionID = EcConnection.cm_IDCounter
