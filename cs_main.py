@@ -246,6 +246,7 @@ class CsApp:
             self.m_logger.debug('l_time_string: ' + l_time_string)
 
             if l_time_string == '02:30':
+                self.m_logger.info('requesting reboot')
                 self.m_background.reboot_trigger()
 
             time.sleep(20)
@@ -286,94 +287,88 @@ class CsApp:
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
-                select * from (
+                select 
+                    "R".*
+                     , "CY_COUNT"/"PY_COUNT" as "RATIO"
+                from (
                     select 
-                        "P"."ID", "P"."TX_NAME", 
-                        "OPT"."MIN_DT" as "PT_MIN_DT", "OPT"."MAX_DT" as "PT_MAX_DT", "OPT"."COUNT_POST" as "PT_COUNT",
-                        "OCT"."MIN_DT" as "CT_MIN_DT", "OCT"."MAX_DT" as "CT_MAX_DT", "OCT"."COUNT_COMM" as "CT_COUNT",
-                        "OPM"."MIN_DT" as "PM_MIN_DT", "OPM"."MAX_DT" as "PM_MAX_DT", "OPM"."COUNT_POST" as "PM_COUNT",
-                        "OCM"."MIN_DT" as "CM_MIN_DT", "OCM"."MAX_DT" as "CM_MAX_DT", "OCM"."COUNT_COMM" as "CM_COUNT",
-                        "OPY"."MIN_DT" as "PY_MIN_DT", "OPY"."MAX_DT" as "PY_MAX_DT", "OPY"."COUNT_POST" as "PY_COUNT",
-                        "OCY"."MIN_DT" as "CY_MIN_DT", "OCY"."MAX_DT" as "CY_MAX_DT", "OCY"."COUNT_COMM" as "CY_COUNT",
-                        case when "OCY"."COUNT_COMM" is null then 0 else "OCY"."COUNT_COMM" end "CY_COUNT_NN",
-                        "OPW"."COUNT_POST" as "PW_COUNT"
+                        "P"."ID"
+                        ,"P"."TX_NAME"
+                        ,"PST"."MIN_DT"
+                        ,"PST"."MAX_DT"
+                        ,"PST"."PT_COUNT"
+                        ,"PST"."CT_COUNT"
+                        ,case when "PSM"."PM_COUNT" is null then 0 else "PSM"."PM_COUNT" end as "PM_COUNT"
+                        ,case when "PSM"."CM_COUNT" is null then 0 else "PSM"."CM_COUNT" end as "CM_COUNT"
+                        ,case when "PSY"."PY_COUNT" is null then 0 else "PSY"."PY_COUNT" end as "PY_COUNT"
+                        ,case when "PSY"."CY_COUNT" is null then 0 else "PSY"."CY_COUNT" end as "CY_COUNT"
+                        ,case when "PSW"."PW_COUNT" is null then 0 else "PSW"."PW_COUNT" end as "PW_COUNT"
                     from
                         "TB_PAGES" as "P"
                         join (
-                        select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Post'
-                        group by "ID_PAGE"
-                        ) as "OPT" on "P"."ID" = "OPT"."ID_PAGE"
+                            select 
+                                "ID", 
+                                min("DAY") as "MIN_DT",
+                                max("DAY") as "MAX_DT",
+                                sum("PD_COUNT") as "PT_COUNT", 
+                                sum("CD COUNT") as "CT_COUNT"
+                            from "TB_STATS_DAY"
+                            group by "ID"
+                        ) as "PST" on "PST"."ID" = "P"."ID"
                         left outer join (
-                        select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Comm'
-                        group by "ID_PAGE"
-                        ) as "OCT" on "P"."ID" = "OCT"."ID_PAGE"
+                            select 
+                                "ID", 
+                                sum("PD_COUNT") as "PM_COUNT", 
+                                sum("CD COUNT") as "CM_COUNT"
+                            from "TB_STATS_DAY"
+                            where DATE_PART('day', now()::date - "DAY") <= 30
+                            group by "ID"
+                        ) as "PSM" on "PSM"."ID" = "P"."ID"
                         left outer join (
-                        select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 30
-                        group by "ID_PAGE"
-                        ) as "OPM" on "P"."ID" = "OPM"."ID_PAGE"
+                            select 
+                                "ID", 
+                                sum("PD_COUNT") as "PY_COUNT", 
+                                sum("CD COUNT") as "CY_COUNT"
+                            from "TB_STATS_DAY"
+                            where DATE_PART('day', now()::date - "DAY") <= 365
+                            group by "ID"
+                        ) as "PSY" on "PSY"."ID" = "P"."ID"
                         left outer join (
-                        select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 30
-                        group by "ID_PAGE"
-                        ) as "OCM" on "P"."ID" = "OCM"."ID_PAGE"
-                        left outer join (
-                        select "ID_PAGE", count(1) as "COUNT_POST", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 365
-                        group by "ID_PAGE"
-                        ) as "OPY" on "P"."ID" = "OPY"."ID_PAGE"
-                        left outer join (
-                        select "ID_PAGE", count(1) as "COUNT_COMM", max("DT_CRE") as "MAX_DT", min("DT_CRE") as "MIN_DT"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Comm' and DATE_PART('day', now()::date - "DT_CRE") <= 365
-                        group by "ID_PAGE"
-                        ) as "OCY" on "P"."ID" = "OCY"."ID_PAGE"
-                        left outer join (
-                        select "ID_PAGE", count(1) as "COUNT_POST"
-                        from "TB_OBJ"
-                        where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
-                        group by "ID_PAGE"
-                        ) as "OPW" on "P"."ID" = "OPW"."ID_PAGE"
+                            select 
+                                "ID", 
+                                sum("PD_COUNT") as "PW_COUNT"
+                            from "TB_STATS_DAY"
+                            where DATE_PART('day', now()::date - "DAY") <= 7
+                            group by "ID"
+                        ) as "PSW" on "PSW"."ID" = "P"."ID"
                 ) as "R"
-                order by "R"."CY_COUNT_NN"/"R"."PY_COUNT" desc;
+                order by case when "PY_COUNT" < 5 then 0.01 else "CY_COUNT"/"PY_COUNT" end desc
             """)
+
+            def display_ratio(p_comments, p_posts):
+                if p_posts is None or p_comments is None or p_posts == 0:
+                    return 'n/a'
+                else:
+                    return '{0:,.1f}'.format(p_comments / p_posts).replace(',', ' ')
+
+            def fmt_int_none(p_num):
+                # self.m_logger.info('p_num: {0}'.format(p_num))
+                if p_num is None:
+                    return ''
+                else:
+                    return '{0:,.0f}'.format(p_num).replace(',', ' ')
+                    # return '{0:,n}'.format(p_num).replace(',', ' ')
+                    # return '{:,d}'.format(p_num).replace(',', ' ')
 
             l_response = ''
             l_row_num = 0
             for \
                     l_page_id, l_page_name, \
-                    l_dmin_pt, l_dmax_pt, l_count_pt, \
-                    l_dmin_ct, l_dmax_ct, l_count_ct, \
-                    l_dmin_pm, l_dmax_pm, l_count_pm, \
-                    l_dmin_cm, l_dmax_cm, l_count_cm, \
-                    l_dmin_py, l_dmax_py, l_count_py, \
-                    l_dmin_cy, l_dmax_cy, l_count_cy, _, l_count_pw in l_cursor:
-
-                l_dmin = l_dmin_pt
-                if l_dmin_ct is not None and l_dmin_ct < l_dmin:
-                    l_dmin = l_dmin_ct
-                l_dmax = l_dmax_pt
-                if l_dmax_ct is not None and l_dmax_ct > l_dmax:
-                    l_dmax = l_dmax_ct
-
-                def display_ratio(p_comments, p_posts):
-                    if p_posts is None or p_comments is None:
-                        return 'n/a'
-                    else:
-                        return '{0:,.1f}'.format(p_comments/p_posts).replace(',', ' ')
-
-                def fmt_int_none(p_num):
-                    if p_num is None:
-                        return ''
-                    else:
-                        return '{:,d}'.format(p_num).replace(',', ' ')
+                    l_dmin, l_dmax, \
+                    l_count_pt, l_count_ct, \
+                    l_count_pm, l_count_cm, \
+                    l_count_py, l_count_cy, \
+                    l_count_pw, _ in l_cursor:
 
                 # with of the bracket of posts to be displayed initially for the page (in days)
                 l_page_width = 7 if l_count_pw is not None and l_count_pw > 40 else 30
@@ -397,8 +392,8 @@ class CsApp:
                 """.format(
                     l_page_id,
                     l_page_name,
-                    l_dmin.strftime('%d/%m/%Y %H:%M'),
-                    l_dmax.strftime('%d/%m/%Y %H:%M'),
+                    l_dmin.strftime('%d/%m/%Y'),
+                    l_dmax.strftime('%d/%m/%Y'),
                     fmt_int_none(l_count_pt), fmt_int_none(l_count_ct), display_ratio(l_count_ct, l_count_pt),
                     fmt_int_none(l_count_py), fmt_int_none(l_count_cy), display_ratio(l_count_cy, l_count_py),
                     fmt_int_none(l_count_pm), fmt_int_none(l_count_cm), display_ratio(l_count_cm, l_count_pm),
@@ -523,7 +518,7 @@ class CsApp:
                             "O"."TX_MESSAGE",
                             "O"."N_LIKES",
                             "O"."N_SHARES",
-                            "C"."COMM_COUNT",
+                            "O"."N_COMM",
                             "M"."MEDIA_COUNT",
                             "M"."OCR_COUNT",
                             "P"."TX_NAME",
@@ -533,12 +528,6 @@ class CsApp:
                             "TB_OBJ" as "O" 
                             join "TB_PAGES" as "P" on "O"."ID_PAGE" = "P"."ID"
                             left outer join "TB_USER" as "U" on "U"."ID" = "O"."ID_USER"
-                            left outer join (
-                                select "ID_POST", count(1) as "COMM_COUNT"
-                                from "TB_OBJ"
-                                where "ST_TYPE" = 'Comm'
-                                group by "ID_POST"
-                            ) as "C" on "O"."ID" = "C"."ID_POST"
                             left outer join (
                                 select 
                                     "ID_OWNER", 
@@ -550,6 +539,7 @@ class CsApp:
                         where 
                             "O"."ID_PAGE" = %s
                             and "O"."ST_TYPE" = 'Post'
+                            and "O"."ID_PAGE" = "O"."ID_USER"
                             and "O"."DT_CRE" < %s
                             and "O"."DT_CRE" >= %s
                         order by "O"."DT_CRE" desc;
@@ -606,10 +596,10 @@ class CsApp:
                                 <td><a class="FB_Link" href="https://www.facebook.com/{0}" target="_blank">{1}</a></td>
                                 <td><a class="Post_Link" href="/post/{0}" target="_blank">{2}</a></td>
                                 <td><a class="User_Link" href="/user/{3}" target="_blank">{4}</a></td>
-                                <td>{5}</td>
-                                <td>{6}</td>
-                                <td>{7}</td>
-                                <td>{8}</td>
+                                <td style="text-align: right;">{5}</td>
+                                <td style="text-align: right;">{6}</td>
+                                <td style="text-align: right;">{7}</td>
+                                <td style="text-align: center;">{8}</td>
                                 <td>{9}</td>
                             <tr/>
                         """.format(
@@ -618,9 +608,9 @@ class CsApp:
                     l_fb_type + ('/' + l_fb_status_type if len(l_fb_status_type) > 0 else ''),
                     l_id_user,
                     cut_max(l_user_name, 25),
-                    l_likes,
-                    l_shares,
-                    l_comm_count if l_comm_count is not None else '',
+                    '{:,.0f}'.format(l_likes).replace(',', ' '),
+                    '{:,.0f}'.format(l_shares).replace(',', ' '),
+                    '{:,.0f}'.format(l_comm_count).replace(',', ' ') if l_comm_count is not None else '',
                     ('{0}'.format(l_media_count) if l_media_count is not None else '') +
                         ('*' if l_ocr_count is not None and l_ocr_count > 0 else ''),
                     l_display_text
@@ -761,10 +751,10 @@ class CsApp:
                         "O"."TX_MESSAGE",
                         "O"."N_LIKES",
                         "O"."N_SHARES",
+                        "O"."N_COMM",
                         "M"."IMG_COUNT",
                         "U"."ST_NAME",
                         "P"."TX_NAME",
-                        "C"."COMMENT_COUNT",
                         "O"."ID_USER"
                     from 
                         "TB_OBJ" as "O"
@@ -776,11 +766,6 @@ class CsApp:
                             group by "ID_OWNER"  
                         ) as "M" on "O"."ID" = "M"."ID_OWNER"
                         left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
-                        left outer join ( 
-                            select "ID_POST", count(1) as "COMMENT_COUNT"
-                            from "TB_OBJ" where "ST_TYPE" = 'Comm'
-                            group by "ID_POST"
-                        ) as "C" on "O"."ID" = "C"."ID_POST"
                     where "O"."ID" = %s;
                 """, (l_post_id,)
             )
@@ -798,10 +783,10 @@ class CsApp:
                 l_message, \
                 l_likes, \
                 l_shares,\
+                l_comments,\
                 l_img_count,\
                 l_user_name,\
                 l_page_name,\
-                l_comment_count,\
                 l_id_user\
                     in l_cursor:
 
@@ -947,12 +932,12 @@ class CsApp:
                     <tr>
                         <td class="Post" style="font-family: sans-serif; font-weight: bold; 
                             vertical-align: top;">Page</td>
-                        <td class="Post">{13}</td>
+                        <td class="Post">{14}</td>
                     <tr/>
                     <tr>
                         <td class="Post"style="font-family: sans-serif; font-weight: bold; 
                             vertical-align: top;">From</td>
-                        <td class="Post"><a class="User_Link" href="/user/{15}" target="_blank">{12}</a></td>
+                        <td class="Post"><a class="User_Link" href="/user/{15}" target="_blank">{13}</a></td>
                     <tr/>
                     <tr>
                         <td class="Post" style="font-family: sans-serif; font-weight: bold; 
@@ -997,26 +982,26 @@ class CsApp:
                     <tr>
                         <td class="Post" style="font-family: sans-serif; font-weight: bold; 
                             vertical-align: top;">Likes/Shares/Comments:</td>
-                        <td class="Post">{9}&nbsp;/&nbsp;{10}&nbsp;/&nbsp;{14}</td>
+                        <td class="Post">{9}&nbsp;/&nbsp;{10}&nbsp;/&nbsp;{11}</td>
                     <tr/>
-                    {11}
+                    {12}
                 """.format(
-                    l_post_id,
-                    l_fb_type,
-                    l_fb_status_type,
-                    l_dt.strftime('%d/%m/%Y %H:%M'),
-                    l_name,
-                    l_caption,
-                    l_desc,
-                    l_story,
-                    l_message,
-                    fmt_int_none(l_likes),
-                    fmt_int_none(l_shares),
-                    l_img_string,
-                    l_user_name,
-                    l_page_name,
-                    fmt_int_none(l_comment_count),
-                    l_id_user
+                    l_post_id,  # 0
+                    l_fb_type,  # 1
+                    l_fb_status_type,  # 2
+                    l_dt.strftime('%d/%m/%Y %H:%M'),  # 3
+                    l_name,  # 4
+                    l_caption,  # 5
+                    l_desc,  # 6
+                    l_story,  # 7
+                    l_message,  # 8
+                    fmt_int_none(l_likes),  # 9
+                    fmt_int_none(l_shares),  # 10
+                    fmt_int_none(l_comments),  # 11
+                    l_img_string,  # 12
+                    l_user_name,  # 13
+                    l_page_name,  # 14
+                    l_id_user  # 15
                 )
         except Exception as e:
             self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
@@ -1288,6 +1273,7 @@ class CsApp:
                         ,"S"."COMMENTS_COUNT" 
                         ,"S"."TOTAL_COUNT" 
                         ,"S"."COUNT_PAGE" 
+                        ,"X"."N_COMM"
                     from (
                         select 
                             "O"."ID",
@@ -1304,11 +1290,11 @@ class CsApp:
                             "O"."TX_MESSAGE",
                             "O"."N_LIKES",
                             "O"."N_SHARES",
+                            "O"."N_COMM",
                             "M"."IMG_COUNT",
                             "U"."ST_NAME",
                             "U"."ID" as "ID_USER",
                             "P"."TX_NAME",
-                            "C"."COMMENT_COUNT",
                             "N"."POST_COUNT"
                         from 
                             (
@@ -1327,6 +1313,7 @@ class CsApp:
                                     "OL"."TX_MESSAGE",
                                     "OL"."N_LIKES",
                                     "OL"."N_SHARES",
+                                    "OL"."N_COMM",
                                     "U"."ID" as "ID_USER"
                                 from 
                                     "TB_USER_UNIQUE" "U" join "TB_LIKE" "L" on "L"."ID_USER_INTERNAL" = "U"."ID_INTERNAL"
@@ -1341,11 +1328,6 @@ class CsApp:
                                 group by "ID_OWNER"  
                             ) as "M" on "O"."ID" = "M"."ID_OWNER"
                             left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
-                            left outer join ( 
-                                select "ID_POST", count(1) as "COMMENT_COUNT"
-                                from "TB_OBJ" where "ST_TYPE" = 'Comm'
-                                group by "ID_POST"
-                            ) as "C" on "O"."ID" = "C"."ID_POST"
                             left outer join ( 
                                 select "ID_PAGE", count(1) as "POST_COUNT"
                                 from "TB_OBJ" 
@@ -1369,11 +1351,11 @@ class CsApp:
                             "O"."TX_MESSAGE",
                             "O"."N_LIKES",
                             "O"."N_SHARES",
+                            "O"."N_COMM",
                             "M"."IMG_COUNT",
                             "U"."ST_NAME",
                             "U"."ID" as "ID_USER",
                             "P"."TX_NAME",
-                            "C"."COMMENT_COUNT",
                             "N"."POST_COUNT"
                         from 
                             "TB_OBJ" as "O"
@@ -1386,11 +1368,6 @@ class CsApp:
                             ) as "M" on "O"."ID" = "M"."ID_OWNER"
                             left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
                             left outer join ( 
-                                select "ID_POST", count(1) as "COMMENT_COUNT"
-                                from "TB_OBJ" where "ST_TYPE" = 'Comm'
-                                group by "ID_POST"
-                            ) as "C" on "O"."ID" = "C"."ID_POST"
-                            left outer join ( 
                                 select "ID_PAGE", count(1) as "POST_COUNT"
                                 from "TB_OBJ" 
                                 where "ST_TYPE" = 'Post' and DATE_PART('day', now()::date - "DT_CRE") <= 7
@@ -1399,6 +1376,7 @@ class CsApp:
                         where "O"."ID_USER" = %s
                     ) as "E" 
                     left outer join "TB_USER_STATS" as "S" on "S"."ID" = "E"."ID_USER"
+                    left outer join "TB_OBJ" as "X" on "X"."ID" = "E"."ID_POST"
                     order by "E"."DT_CRE" desc;
                 """, (l_user_id, l_user_id)
             )
@@ -1427,17 +1405,18 @@ class CsApp:
             l_message, \
             l_likes, \
             l_shares, \
+            l_comments, \
             l_img_count, \
             l_user_name, \
             l_id_user, \
             l_page_name, \
-            l_comment_count,\
             l_page_post_count,\
             l_user_likes_count, \
             l_user_posts_count, \
             l_user_comments_count, \
             l_user_total_count, \
-            l_user_pages_count \
+            l_user_pages_count,\
+            l_post_comments\
                 in l_cursor:
 
             l_total = len(l_name) + len(l_caption) + len(l_desc) + len(l_story) + 2 * len(l_message)
@@ -1470,8 +1449,9 @@ class CsApp:
                     l_page_name,
                     l_fb_type + ('/{0}'.format(l_fb_status_type)
                                  if l_fb_status_type is not None and len(l_fb_status_type) > 0 else ''),
-                    '{0}/{1}'.format(fmt_int_none(l_likes), fmt_int_none(l_shares))
-                        if l_fb_type != 'Comment' else fmt_int_none(l_likes),
+                    '{0} | {1} | {2}'.format(fmt_int_none(l_likes), fmt_int_none(l_shares), fmt_int_none(l_comments))
+                        if l_fb_type != 'Comment'
+                        else '{0} + {1}'.format(fmt_int_none(l_likes), fmt_int_none(l_post_comments)),
                     l_display_text,
                     l_id,
                     '{0}/{1}/{2}'.format(
@@ -1559,7 +1539,7 @@ class CsApp:
                         <th>Type</th>
                         <th>Page</th>
                         <th>FB Type</th>
-                        <th>Likes/Shares</th>
+                        <th>Likes|Shares|Comm.<br/>Likes+Post Comm.</th>
                         <th>Text</th>
                     <tr/>
                         {2}

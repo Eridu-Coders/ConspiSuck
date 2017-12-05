@@ -83,3 +83,37 @@ from
 	join "TMP_UCOUNTS_2" as "B" on "A"."ID" = "B"."ID"
 order by "B"."COUNT_PAGE" desc;
 ALTER TABLE public."TB_USER_STATS" ADD PRIMARY KEY ("ID");	
+
+drop table if exists "TB_STATS_DAY";
+create table "TB_STATS_DAY" as
+select * from (
+	select "OPT"."DAY", "P"."ID", "P"."TX_NAME",
+		"OPT"."COUNT_POST" as "PD_COUNT",
+		case when "OCT"."COUNT_COMM" is null then 0 else "OCT"."COUNT_COMM" end "CD COUNT"
+	from
+		"TB_PAGES" as "P"
+		join (
+			select "ID_PAGE", count (1) as "COUNT_POST", date_trunc('day', "DT_CRE") "DAY"
+			from "TB_OBJ"
+			where "ST_TYPE" = 'Post' and "ID_PAGE" = "ID_USER"
+			group by "ID_PAGE", date_trunc('day' , "DT_CRE")
+		) as "OPT" on "P"."ID" = "OPT"."ID_PAGE"
+		left outer join (
+			select "ID_PAGE", count (1) as "COUNT_COMM", date_trunc('day', "DT_CRE") "DAY"
+			from "TB_OBJ"
+			where "ST_TYPE" = 'Comm' 
+			group by "ID_PAGE", date_trunc('day' , "DT_CRE")
+		) as "OCT" on "P"."ID" = "OCT"."ID_PAGE" and "OCT"."DAY" = "OPT"."DAY"
+) as "R"
+order by "DAY" desc, "PD_COUNT" desc;
+ALTER TABLE public."TB_STATS_DAY" ADD PRIMARY KEY ("DAY", "ID");
+
+update "TB_OBJ" as "O"
+set "N_COMM" = "C"."COMM_COUNT"
+from (
+	select "ID_FATHER", count(1) as "COMM_COUNT"
+	from "TB_OBJ"
+	where "ST_TYPE" = 'Comm'
+	group by "ID_FATHER"
+) as "C"
+where "O"."ID" = "C"."ID_FATHER" and DATE_PART('day', now()::date - "O"."DT_CRE") <= 30;
