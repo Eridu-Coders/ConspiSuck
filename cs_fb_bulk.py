@@ -428,6 +428,7 @@ class BulkDownloader:
 
         :return:
         """
+        self.m_logger.info('reboot_trigger()')
         self.must_reboot = True
 
     def get_pages(self):

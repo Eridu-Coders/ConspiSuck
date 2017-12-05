@@ -153,6 +153,7 @@ class CsBackgroundTask(threading.Thread):
 
         :return:
         """
+        self.m_logger.info('reboot_trigger()')
         self.m_bulk.reboot_trigger()
 
 
@@ -242,8 +243,8 @@ class CsApp:
 
         while True:
             l_time_string = datetime.datetime.now().strftime('%H:%M')
-            if not LocalParam.gcm_prodEnv:
-                self.m_logger.info('l_time_string: ' + l_time_string)
+            self.m_logger.debug('l_time_string: ' + l_time_string)
+
             if l_time_string == '02:30':
                 self.m_background.reboot_trigger()
 

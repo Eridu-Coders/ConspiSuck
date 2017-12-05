@@ -108,8 +108,8 @@ class EcLogger(logging.Logger):
         l_debug_table = 'TB_EC_DEBUG' if LocalParam.gcm_prodEnv else 'TB_EC_DEBUG_DEV'
         l_env_code = 'PRD' if LocalParam.gcm_prodEnv else 'DEV'
 
-        # purge TB_EC_DEBUG
-        if p_purge:
+        # purge TB_EC_DEBUG (only if main process)
+        if p_purge and multiprocessing.current_process().name == 'Z':
             l_conn = EcConnectionPool.get_global_pool().getconn('EcLogger.log_init()')
             l_cursor = l_conn.cursor()
             try:

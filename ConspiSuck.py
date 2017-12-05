@@ -78,6 +78,10 @@ class StartApp:
         print('c.likes_proc : {0}'.format(c.likes_proc))
         print('c.ocr_proc   : {0}'.format(c.ocr_proc))
 
+        # give one-letter name to current process
+        multiprocessing.current_process().name = 'Z'
+        threading.current_thread().name = 'µ'
+
         # instantiate the app
         l_app = CsApp(c.likes_proc, c.ocr_proc, c.get_pages)
 
@@ -85,10 +89,6 @@ class StartApp:
 
         # select the correct process launch method to avoid SSL issues in Psycopg2
         # multiprocessing.set_start_method('spawn')
-
-        # give one-letter name to current process
-        multiprocessing.current_process().name = 'Z'
-        threading.current_thread().name = 'µ'
 
         print('Sub-processes start')
         l_app.start_processes()
