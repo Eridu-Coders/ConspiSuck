@@ -245,7 +245,7 @@ class CsApp:
             l_time_string = datetime.datetime.now().strftime('%H:%M')
             self.m_logger.debug('l_time_string: ' + l_time_string)
 
-            if l_time_string == '02:30':
+            if l_time_string == LocalParam.gcm_rebootTime:
                 self.m_logger.info('requesting reboot')
                 self.m_background.reboot_trigger()
 

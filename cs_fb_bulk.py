@@ -400,6 +400,7 @@ class BulkDownloader:
                 self.m_logger.warning('bulk_download main loop exception capture: ' + repr(e))
 
             # reboot ?
+            self.m_logger.info('*** RBTEST Reboot Test ***')
             if self.must_reboot:
                 # no more than one reboot per day
                 with open(l_reboot_path, 'r') as f:
@@ -408,10 +409,15 @@ class BulkDownloader:
                 if not l_already_rebooted:
                     self.m_logger.info('*** REBOOT System reboot ***')
                     try:
-                        os.system('shutdown -r now')
-                        # subprocess.call('shutdown -r now'.split(' '))
+                        # os.system('shutdown -r now')
+                        subprocess.run('shutdown --reboot now'.split(' '), shell=True, check=True)
                     except subprocess.CalledProcessError as e:
-                        self.m_logger.warning('Failed to reboot the system: {0}'.format(e.returncode))
+                        self.m_logger.warning(
+                            'Failed to reboot the system: ' +
+                            'returncode: {0}|'.format(e.returncode) +
+                            'stdout: {0}|'.format(e.stdout) +
+                            'stderr: {0}|'.format(e.stderr)
+                        )
                 else:
                     self.m_logger.info('*** NRBOOT Already rebooted ***')
 

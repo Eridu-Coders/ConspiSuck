@@ -23,10 +23,12 @@ __author__ = 'Pavan Mahalingam'
 class GlobalStart:
     @staticmethod
     def basic_env_start():
+        print('basic_env_start() start : ' + multiprocessing.current_process().name)
         # mailer init
         EcMailer.init_mailer()
 
         # test connection to PostgresQL and wait if unavailable
+        print('basic_env_start() before PGSQL test : ' + multiprocessing.current_process().name)
         while True:
             try:
                 l_connect = psycopg2.connect(
@@ -44,14 +46,18 @@ class GlobalStart:
                 continue
 
         # initializes global connection pool
+        print('basic_env_start() before pool init : ' + multiprocessing.current_process().name)
         EcConnectionPool.init_global_pool()
 
         # logging system init (has to be after connection pool init because it uses it)
+        print('basic_env_start() before logger init : ' + multiprocessing.current_process().name)
         try:
             EcLogger.log_init()
         except Exception as e:
             EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
             sys.exit(0)
+
+        print('basic_env_start() end : ' + multiprocessing.current_process().name)
 
 
 # -------------------------------------- Logging Set-up ----------------------------------------------------------------
