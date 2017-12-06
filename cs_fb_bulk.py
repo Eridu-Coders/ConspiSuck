@@ -410,7 +410,8 @@ class BulkDownloader:
                     self.m_logger.info('*** REBOOT System reboot ***')
                     try:
                         # os.system('shutdown -r now')
-                        subprocess.run('shutdown --reboot now'.split(' '), shell=True, check=True)
+                        # subprocess.run('shutdown --reboot now'.split(' '), shell=True, check=True)
+                        subprocess.run('/sbin/reboot'.split(' '), shell=True, check=True)
                     except subprocess.CalledProcessError as e:
                         self.m_logger.warning(
                             'Failed to reboot the system: ' +
