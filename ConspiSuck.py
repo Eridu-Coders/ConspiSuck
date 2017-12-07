@@ -78,6 +78,9 @@ class StartApp:
         print('c.likes_proc : {0}'.format(c.likes_proc))
         print('c.ocr_proc   : {0}'.format(c.ocr_proc))
 
+        # unicode block data
+        UnicodeBlockInfo.class_init()
+
         # give one-letter name to current process
         multiprocessing.current_process().name = 'Z'
         threading.current_thread().name = 'µ'

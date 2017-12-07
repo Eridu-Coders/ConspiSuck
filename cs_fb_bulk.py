@@ -2277,13 +2277,16 @@ class BulkDownloader:
                         self.m_logger.info('Variant File: ' + l_file)
 
                     # issue the file to the Tesserocr instance
+                    self.m_logger.debug('before SetImageFile()')
                     p_api.SetImageFile(l_file)
 
                     # get the full OCR text
+                    self.m_logger.debug('before GetUTF8Text()')
                     l_txt = re.sub(r'\s+', r' ', p_api.GetUTF8Text()).strip()
                     # if text longer than 10 characters --> analyze word by word
                     if len(l_txt) > 10:
                         # get the result iterator from the Tesserocr API instance
+                        self.m_logger.debug('before GetIterator()')
                         ri = p_api.GetIterator()
 
                         # list of all words
@@ -2295,6 +2298,7 @@ class BulkDownloader:
                         while True:
                             try:
                                 # the word
+                                self.m_logger.debug('before ri.GetUTF8Text()')
                                 l_word_ocr = re.sub('\s+', ' ', ri.GetUTF8Text(RIL.WORD)).strip()
                                 # its confidence value
                                 l_conf = ri.Confidence(RIL.WORD)
@@ -2313,7 +2317,7 @@ class BulkDownloader:
                                 # whether the word contains only alphabetic characters (and possibly a
                                 # punctuation mark at the end))
                                 l_full_alpha = re.match(
-                                    r'(^[a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[.,;:?!]*$', l_word_ocr)
+                                    r'(^[a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[.,;:?!\'"]*$', l_word_ocr)
                                 # l_full_alpha = False
                                 # l_match = re.search(r'([a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*', l_word)
                                 # if l_match:
@@ -2321,7 +2325,7 @@ class BulkDownloader:
 
                                 # whether the word contains only numeric characters (and possibly a
                                 # punctuation mark at the end))
-                                l_full_num = re.match(r'(^[0-9]+[:,.][0-9]+|[0-9]+)[.,;:?!]*$', l_word_ocr)
+                                l_full_num = re.match(r'(^[0-9]+[:,.][0-9]+|[0-9]+)[.,;:?!\'"]*$', l_word_ocr)
                                 # l_full_num = False
                                 # l_match = re.search(r'([0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*', l_word)
                                 # if l_match:
@@ -2354,6 +2358,7 @@ class BulkDownloader:
                                 break
 
                             # move the iterator one notch forward
+                            self.m_logger.debug('before ri.Next()')
                             if not ri.Next(RIL.WORD):
                                 break
                         # end of loop: while True:

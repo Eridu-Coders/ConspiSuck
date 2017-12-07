@@ -16,6 +16,7 @@ import psycopg2.extensions
 import threading
 import multiprocessing
 import sys
+import requests
 
 __author__ = 'Pavan Mahalingam'
 
@@ -770,6 +771,64 @@ class EcConnection(psycopg2.extensions.connection):
 
         """
         self.m_debugData = 'Used'
+
+
+class UnicodeBlockInfo:
+    """
+    Taken from: https://gist.github.com/acdha/49a610089c2798db6fe2
+    """
+    cm_UNICODE_BLOCKS = None
+
+    @classmethod
+    def class_init(cls):
+        l_unicode_path = os.path.join(LocalParam.gcm_appRoot, 'UNIDATA-Blocks.txt')
+        cls.cm_UNICODE_BLOCKS = cls.load_unicode_blocks(l_unicode_path)
+
+    @classmethod
+    def get_block_for_codepoint(cls, p_cp):
+        """
+        Return the Unicode block name for the provided numeric codepoint
+        """
+
+        if not p_cp is int:
+            p_cp = ord(p_cp)
+
+        for start, end, block_name in cls.cm_UNICODE_BLOCKS:
+            if start <= p_cp <= end:
+                return block_name
+
+        return 'No_Block'
+
+    @staticmethod
+    def load_unicode_blocks_from_file(f):
+        file_contents = f.read().decode('utf-8')
+
+        blocks = []
+        # for start, end, block_name in re.findall(r'([0-9A-F]+)\.\.([0-9A-F]+);\ (\S.*\S)', file_contents):
+        for start, end, block_name in re.findall(r'([0-9A-F]+)\.\.([0-9A-F]+);\s(\S.*\S)', file_contents):
+            if block_name == 'No_Block':
+                continue
+
+            blocks.append((int(start, 16), int(end, 16), block_name))
+
+        return blocks
+
+    @staticmethod
+    def load_unicode_blocks(block_filename):
+        if not os.path.exists(block_filename):
+            print('Unicode block file %s does not exist. Downloading…' % block_filename)
+            r = requests.get('http://unicode.org/Public/UNIDATA/Blocks.txt')
+            r.raise_for_status()
+
+            with open(block_filename, 'wb') as f:
+                for chunk in r.iter_content():
+                    f.write(chunk)
+
+        with open(block_filename, 'rb') as f:
+            blocks = UnicodeBlockInfo.load_unicode_blocks_from_file(f)
+
+        return blocks
+
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":

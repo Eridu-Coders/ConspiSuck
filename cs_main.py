@@ -4,6 +4,7 @@
 from ec_app_core import *
 
 from cs_fb_bulk import *
+from cs_fb_nlp import *
 # from cs_fb_connect import *
 
 import sys
@@ -1196,6 +1197,7 @@ class CsApp:
                     l_user_likes_count if l_user_likes_count is not None else 0,
                     l_user_pages_count if l_user_pages_count is not None else 0)
 
+                l_categories = Dummy.get_categories(l_msg)
                 l_html += """
                     <div{10} style="margin-left: {0}em;">
                         <p class="Comment"{1}>
@@ -1203,23 +1205,24 @@ class CsApp:
                             <a class="User_Link" href="/user/{9}" target="_blank">{2}</a></td><td> 
                             <span style="color: DarkGray; font-size: smaller;">[{3} / {4} likes]</span>
                             </td><td style="color: Red;">{8}<td></tr></table> 
-                            {5}
+                            {5} <span style="color: Blue;">{11}</span>
                             {6} 
                             <span style="color: Green;">{7}</span>
                         </p>
                     </div>
                 """.format(
-                    (p_depth-1)*2 + 1,
-                    l_para_style,
-                    l_user_name,
-                    l_dt.strftime('%d/%m/%Y %H:%M'),
-                    l_likes,
-                    l_msg,
-                    l_image_html,
-                    '<br/>{0}/{1}'.format(l_txt, l_voc) if l_txt is not None and len(l_txt) > 0 else '',
-                    '',  # l_vars
-                    l_id_user,
-                    ' id="K{0}"'.format(p_comment_anchor_id) if l_id == p_comment_anchor_id else ''
+                    (p_depth-1)*2 + 1,  # 0
+                    l_para_style,  # 1
+                    l_user_name,  # 2
+                    l_dt.strftime('%d/%m/%Y %H:%M'),  # 3
+                    l_likes,  # 4
+                    l_msg,  # 5
+                    l_image_html,  # 6
+                    '<br/>{0}/{1}'.format(l_txt, l_voc) if l_txt is not None and len(l_txt) > 0 else '',  # 7
+                    '',  # l_vars   # 8
+                    l_id_user,  # 9
+                    ' id="K{0}"'.format(p_comment_anchor_id) if l_id == p_comment_anchor_id else '',  # 10
+                    ''  # l_categories  # 11
                 )
 
                 l_html_add, l_bkg_id, l_img_fifo = \
