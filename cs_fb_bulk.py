@@ -85,6 +85,9 @@ class BulkDownloader:
         #: Image fetching Thread
         self.m_image_fetch_thread = None
 
+        #: Process watchdog thread
+        self.m_process_watchdog_thread = None
+
         #: Likes details download Processes
         self.m_likes_details_process = []
 
@@ -214,6 +217,28 @@ class BulkDownloader:
 
         print('BulkDownloader.start_processes() End')
 
+    def process_watchdog(self):
+        """
+
+        :return:
+        """
+        while True:
+            self.m_logger.info('Process Watchdog')
+
+            for l_process_number in range(self.m_ocr_process_count):
+                if self.m_ocr_process[l_process_number].is_alive():
+                    self.m_logger.info('Process O{0} is alive'.format(l_process_number))
+                else:
+                    self.m_logger.info('Process O{0} is dead'.format(l_process_number))
+                    self.resume_ocr(l_process_number)
+
+                    p = multiprocessing.Process(target=self.repeat_ocr_image, args=(self.m_ocr_lock,))
+                    p.name = 'O{0}'.format(l_process_number)
+                    self.m_ocr_process[l_process_number] = p
+                    p.start()
+
+            time.sleep(60)
+
     def full_init(self):
         # Local logger
         self.m_logger = logging.getLogger('BulkDownloader')
@@ -238,6 +263,13 @@ class BulkDownloader:
         self.m_image_fetch_thread.name = 'I'
         self.m_image_fetch_thread.start()
         self.m_logger.info('Image fetch thread launched')
+
+        # Process watchdog thread
+        self.m_process_watchdog_thread = Thread(target=self.process_watchdog)
+        # One-letter name for the Image fetching thread
+        self.m_process_watchdog_thread.name = 'W'
+        self.m_process_watchdog_thread.start()
+        self.m_logger.info('Process watchdog thread launched')
 
     def new_process_init(self):
         """
@@ -338,8 +370,8 @@ class BulkDownloader:
                 update
                     "TB_MEDIA"
                 set
-                    "F_LOCK" = false
-                where "F_LOCK";
+                    "F_LOCK" = NULL
+                where "F_LOCK" is not NULL;
             """)
 
             l_conn_write.commit()
@@ -1984,7 +2016,7 @@ class BulkDownloader:
                         "F_LOADED" 
                         and not "F_ERROR" 
                         and not "F_OCR" 
-                        and not "F_LOCK"
+                        and "F_LOCK" is NULL
                         and not "F_FROM_PARENT";
                 """)
 
@@ -2011,6 +2043,53 @@ class BulkDownloader:
                     self.m_logger.warning('Caught Exception in repeat_ocr_image() loop :' + repr(e))
 
                 time.sleep(1)
+
+    def resume_ocr(self, p_process_number):
+        """
+
+        :return:
+        """
+        l_id_file_name = os.path.join(LocalParam.gcm_appRoot, 'O{0}_internal_ID.txt'.format(p_process_number))
+        l_internal_id = None
+        try:
+            with open(l_id_file_name, 'r') as f:
+                l_internal_id = int(f.read())
+        except Exception as e:
+            self.m_logger.warning('Could not open [{0}] for reading: {1}'.format(l_id_file_name, repr(e)))
+
+        if l_internal_id is not None:
+            l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.resume_ocr()')
+            l_cursor_write = l_conn_write.cursor()
+            try:
+                l_cursor_write.execute("""
+                    update "TB_MEDIA"
+                    set 
+                        "F_LOCK" = NULL
+                        , "F_ERROR" = true
+                        , "F_OCR" = true
+                    where "ID_MEDIA_INTERNAL" = %s;
+                """, (l_internal_id, ))
+                l_conn_write.commit()
+
+                l_cursor_write.execute("""
+                    update "TB_MEDIA"
+                    set 
+                        "F_LOCK" = NULL
+                    where "F_LOCK" = %s;
+                """, ('{0}'.format(p_process_number), ))
+                l_conn_write.commit()
+
+                self.m_logger.info('Marked TB_MEDIA #{0} as OCR error'.format(l_internal_id))
+            except Exception as e:
+                l_conn_write.rollback()
+
+                l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
+                self.m_logger.warning(l_msg)
+                raise BulkDownloaderException(l_msg)
+            finally:
+                # DB handles released after use
+                l_cursor_write.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
     def ocr_images(self, p_lock):
         """
@@ -2087,7 +2166,7 @@ class BulkDownloader:
                         "M"."F_LOADED" 
                         and not "M"."F_ERROR" 
                         and not "M"."F_OCR" 
-                        and not "M"."F_LOCK"
+                        and "M"."F_LOCK" is NULL
                         and not "M"."F_FROM_PARENT"
                     limit %s;
                 """, (l_max_img_count, ))
@@ -2110,9 +2189,10 @@ class BulkDownloader:
                 try:
                     l_cursor_write.execute("""
                         update "TB_MEDIA"
-                        set "F_LOCK" = true
+                        set "F_LOCK" = %s
                         where "ID_MEDIA_INTERNAL" in ({0});
-                            """.format(','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list])))
+                    """.format(','.join([str(l_internal) for l_internal, _, _, _, _, _ in l_media_list])),
+                                           (multiprocessing.current_process().name[1],))
 
                     l_conn_write.commit()
                     self.m_logger.info('LCKOCR Marked {0} images as locked for OCR'.format(len(l_media_list)))
@@ -2146,6 +2226,13 @@ class BulkDownloader:
             # thread abort
             if not self.m_threads_proceed:
                 break
+
+            # store image internal ID to allow resumption in case of process death
+            l_id_file_name = os.path.join(
+                LocalParam.gcm_appRoot,
+                '{0}_internal_ID.txt'.format(multiprocessing.current_process().name))
+            with open(l_id_file_name, 'w') as f:
+                f.write('{0}'.format(l_internal))
 
             self.m_logger.info('len(l_base64/l_base64_fp): {0}/{1}'.format(
                 len(l_base64) if l_base64 is not None else 'None',
@@ -2283,6 +2370,7 @@ class BulkDownloader:
                     # get the full OCR text
                     self.m_logger.debug('before GetUTF8Text()')
                     l_txt = re.sub(r'\s+', r' ', p_api.GetUTF8Text()).strip()
+                    self.m_logger.debug('l_txt: ' + l_txt)
                     # if text longer than 10 characters --> analyze word by word
                     if len(l_txt) > 10:
                         # get the result iterator from the Tesserocr API instance
@@ -3323,7 +3411,7 @@ class BulkDownloader:
                         update "TB_MEDIA"
                         set 
                             "F_OCR" = true,
-                            "F_LOCK" = false
+                            "F_LOCK" = NULL
                         where "ID_MEDIA_INTERNAL" = %s
                     """, (p_internal,))
             l_conn_w.commit()
@@ -3354,7 +3442,7 @@ class BulkDownloader:
                 update "TB_MEDIA"
                 set 
                     "F_OCR" = true
-                    , "F_LOCK" = false
+                    , "F_LOCK" = NULL
                     , "TX_TEXT" = %s
                     , "TX_VOCABULARY" = %s
                 where "ID_MEDIA_INTERNAL" = %s
