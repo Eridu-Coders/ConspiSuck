@@ -58,7 +58,7 @@ class GlobalStart:
             EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
             sys.exit(0)
 
-        print('basic_env_start() end : ' + multiprocessing.current_process().name)
+        EcLogger.root_logger().info('basic_env_start() complete : ' + multiprocessing.current_process().name)
 
 
 # -------------------------------------- Logging Set-up ----------------------------------------------------------------
@@ -111,6 +111,11 @@ class EcLogger(logging.Logger):
         Only INFO level messages and above are displayed on screen (if :any:`gcm_verboseModeOn` is set).
         DEBUG level messages, if any, are sent to the CSV file.
         """
+        if cls.cm_logger is None:
+            print('log_init() : ' + multiprocessing.current_process().name)
+        else:
+            cls.cm_logger.info('log_init() already initialized : ' + multiprocessing.current_process().name)
+            return
 
         l_debug_table = 'TB_EC_DEBUG' if LocalParam.gcm_prodEnv else 'TB_EC_DEBUG_DEV'
         l_env_code = 'PRD' if LocalParam.gcm_prodEnv else 'DEV'
@@ -322,7 +327,13 @@ class EcMailer(threading.Thread):
         Mail system initialization. Creates an empty :any:`cm_sendMailGovernor` and the associated
         Mutexes to allow critical section protection.
         """
-        print('init_mailer() : ' + multiprocessing.current_process().name)
+        if cls.cm_sendMailGovernor is None:
+            print('init_mailer() : ' + multiprocessing.current_process().name)
+        else:
+            print('init_mailer() already initialized : ' + multiprocessing.current_process().name)
+            cls.cm_sendMailGovernor = None
+            cls.cm_mutexGovernor = None
+            cls.cm_mutexFiles = None
 
         cls.cm_sendMailGovernor = dict()
         cls.cm_mutexGovernor = threading.Lock()
@@ -790,7 +801,7 @@ class UnicodeBlockInfo:
         Return the Unicode block name for the provided numeric codepoint
         """
 
-        if not p_cp is int:
+        if p_cp is not int:
             p_cp = ord(p_cp)
 
         for start, end, block_name in cls.cm_UNICODE_BLOCKS:
