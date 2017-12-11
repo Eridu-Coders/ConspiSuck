@@ -88,7 +88,7 @@ class EcAppCore(threading.Thread):
         self.m_hcCounter = 0
 
         #: One letter thread name (member inherited from thread class :any:`threading.Thread`)
-        self.name = 'H'
+        self.name = 'h'
 
         # Thread start placed under the responsibility of the implementation app (30/06/2017)
         # self.start()

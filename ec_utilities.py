@@ -167,55 +167,79 @@ class EcLogger(logging.Logger):
             l_thread_name = threading.current_thread().name
             l_process_name = multiprocessing.current_process().name
 
-            l_conn1 = EcConnectionPool.get_global_pool().getconn('EcCsvFormatter.format()')
-            l_cursor1 = l_conn1.cursor()
-            try:
-                l_cursor1.execute("""
-                        insert into "{0}"( 
-                            {1}
-                            {2}
-                            {3}
-                            "ST_NAME",
-                            "ST_LEVEL",
-                            "ST_MODULE",
-                            "ST_FILENAME",
-                            "ST_FUNCTION",
-                            "N_LINE",
-                            "TX_MSG", 
-                            "ST_THREAD",
-                            "ST_PROCESS"
-                        )
-                        values({4}{5}%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-                    """.format(
-                        p_table,
-                        '"ST_TYPE", ' if p_table == 'TB_EC_MSG' else '',
-                        '"ST_ENV", ' if p_table == 'TB_EC_MSG' else '',
-                        '"DT_MSG", ' if p_table == 'TB_EC_MSG' else '"DT_CRE", ',
-                        "'LOG', " if p_table == 'TB_EC_MSG' else '',
-                        "'{0}', ".format(l_env_code) if p_table == 'TB_EC_MSG' else ''
-                ), (
-                    datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)),
-                    p_record.name,
-                    p_record.levelname,
-                    p_record.module,
-                    p_record.pathname,
-                    p_record.funcName,
-                    p_record.lineno,
-                    re.sub('\s+', ' ', p_record.msg),
-                    l_thread_name[:10],
-                    l_process_name[:10]
-                ))
-                l_conn1.commit()
-            except psycopg2.Error as e1:
-                EcMailer.send_mail(
-                    '{0} insert failure: {1}'.format(p_table, repr(e1)),
-                    'Sent from log_init.db_output():\n{0}\n---- SQL ----\n{1}'.format(
-                        EcConnectionPool.get_psycopg2_error_block(e1), l_cursor1.query)
-                )
-                raise
-
-            l_cursor1.close()
-            EcConnectionPool.get_global_pool().putconn(l_conn1)
+            l_finished = False
+            while not l_finished:
+                l_conn1 = EcConnectionPool.get_global_pool().getconn('EcCsvFormatter.format()')
+                l_cursor1 = l_conn1.cursor()
+                try:
+                    l_cursor1.execute("""
+                            insert into "{0}"( 
+                                {1}
+                                {2}
+                                {3}
+                                "ST_NAME",
+                                "ST_LEVEL",
+                                "ST_MODULE",
+                                "ST_FILENAME",
+                                "ST_FUNCTION",
+                                "N_LINE",
+                                "TX_MSG", 
+                                "ST_THREAD",
+                                "ST_PROCESS"
+                            )
+                            values({4}{5}%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                        """.format(
+                            p_table,
+                            '"ST_TYPE", ' if p_table == 'TB_EC_MSG' else '',
+                            '"ST_ENV", ' if p_table == 'TB_EC_MSG' else '',
+                            '"DT_MSG", ' if p_table == 'TB_EC_MSG' else '"DT_CRE", ',
+                            "'LOG', " if p_table == 'TB_EC_MSG' else '',
+                            "'{0}', ".format(l_env_code) if p_table == 'TB_EC_MSG' else ''
+                    ), (
+                        datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)),
+                        p_record.name,
+                        p_record.levelname,
+                        p_record.module,
+                        p_record.pathname,
+                        p_record.funcName,
+                        p_record.lineno,
+                        re.sub('\s+', ' ', p_record.msg),
+                        l_thread_name[:10],
+                        l_process_name[:10]
+                    ))
+                    l_conn1.commit()
+                    l_finished = True
+                except psycopg2.OperationalError as e1:  # SSL connection has been closed unexpectedly ??
+                    l_conn1.rollback()
+                    EcMailer.send_mail(
+                        '{0} insert failure: {1}'.format(p_table, repr(e1)),
+                        'Sent from log_init.db_output() SQL:\n{0}\n---- Msg ----\n{1}'.format(
+                            l_cursor1.query, repr(p_record))
+                    )
+                    if repr(e1) == 'OperationalError(\'SSL connection has been closed unexpectedly\n\',)':
+                        time.sleep(1)
+                    else:
+                        l_finished = True
+                except psycopg2.Error as e1:
+                    l_conn1.rollback()
+                    EcMailer.send_mail(
+                        '{0} insert failure: {1}'.format(p_table, repr(e1)),
+                        'Sent from log_init.db_output():\n{0}\n---- SQL ----\n{1}\n---- Msg ----\n{2}'.format(
+                            EcConnectionPool.get_psycopg2_error_block(e1), l_cursor1.query, repr(p_record))
+                    )
+                    l_finished = True
+                except Exception as e1:
+                    l_conn1.rollback()
+                    EcMailer.send_mail(
+                        '{0} insert failure: {1}'.format(p_table, repr(e1)),
+                        'Sent from log_init.db_output() SQL:\n{0}\n---- Msg ----\n{1}'.format(
+                            l_cursor1.query, repr(p_record))
+                    )
+                    l_finished = True
+                finally:
+                    l_cursor1.close()
+                    EcConnectionPool.get_global_pool().putconn(l_conn1)
+            # end loop: while not l_finished:
 
         # Custom Formatter for the CSV file --> eliminates multiple spaces (and \r\n)
         class EcCsvFormatter(logging.Formatter):
@@ -244,7 +268,21 @@ class EcLogger(logging.Logger):
         # Custom Formatter for the console --> send mail if warning or worse
         class EcConsoleFormatter(logging.Formatter):
             def format(self, p_record):
-                l_formatted = super().format(p_record)
+                l_time_string = \
+                    datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)).strftime('%d-%m-%Y %H:%M:%S.%f')
+                l_formatted = super().format(logging.LogRecord(
+                    p_record.name,
+                    p_record.levelno,
+                    p_record.pathname,
+                    p_record.lineno,
+                    '{0}:{1}'.format(l_time_string, p_record.msg),
+                    # message arguments are not allowed here
+                    None,
+                    # p_record.args,
+                    p_record.exc_info,
+                    p_record.funcName,
+                    p_record.stack_info
+                ))
 
                 if p_record.levelno >= logging.WARNING:
                     # send mail
@@ -376,7 +414,7 @@ class EcMailer(threading.Thread):
         :param p_message: same as in :any:`send_mail`
         """
         self.m_subject = p_subject
-        self.m_message = p_message
+        self.m_message = p_message.replace('\\n', '\n')
 
         super().__init__()
 

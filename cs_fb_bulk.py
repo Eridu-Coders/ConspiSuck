@@ -267,7 +267,7 @@ class BulkDownloader:
         # Process watchdog thread
         self.m_process_watchdog_thread = Thread(target=self.process_watchdog)
         # One-letter name for the Image fetching thread
-        self.m_process_watchdog_thread.name = 'W'
+        self.m_process_watchdog_thread.name = 'w'
         self.m_process_watchdog_thread.start()
         self.m_logger.info('Process watchdog thread launched')
 
@@ -1468,9 +1468,9 @@ class BulkDownloader:
         p_lock.acquire()
         # Env set-up after process start (logger & mailer)
         self.new_process_init()
-        self.m_logger.info('repeat_get_likes_details() released')
+        self.m_logger.info('repeat_get_likes_details() lock released')
         p_lock.release()
-        time.sleep(1)
+        time.sleep(.01)
 
         while True:
             # get the total count of objects that remains to be processed
@@ -1528,8 +1528,9 @@ class BulkDownloader:
         self.m_logger.info('Start get_likes_detail()')
 
         # CRITICAL SECTION ENTRY --------------------------------------------------------------------------------------
-        self.m_logger.info('CS Entry ---------------')
+        self.m_logger.info('CS Entry -------B-------')
         p_lock.acquire()
+        self.m_logger.info('CS Entry -------A-------')
 
         l_obj_list = []
         # try block to ensure that the CS lock will be released
@@ -1604,8 +1605,10 @@ class BulkDownloader:
             raise
         finally:
             # CRITICAL SECTION EXIT -----------------------------------------------------------------------------------
+            self.m_logger.info('CS Exit -------B-------')
             p_lock.release()
-            self.m_logger.info('CS Exit ---------------')
+            time.sleep(.01)
+            self.m_logger.info('CS Exit -------A-------')
 
         # all non page objects older than gcm_likes_depth days and not already processed
         l_obj_count = 0
@@ -1992,14 +1995,14 @@ class BulkDownloader:
         :param p_lock: Lock protecting `F_LOCK` in `TB_MEDIA`
         :return: Nothing
         """
-
+        print('repeat_ocr_image() start (before acquiring lock) : ' + multiprocessing.current_process().name)
         # to block process start until released
         p_lock.acquire()
         # set-up logging environment, etc
         self.new_process_init()
-        self.m_logger.info('repeat_ocr_image() released')
+        self.m_logger.info('repeat_ocr_image() lock released')
         p_lock.release()
-        time.sleep(1)
+        time.sleep(.01)
 
         while True:
             self.m_logger.info('top of repeat_ocr_image() loop')
@@ -2136,8 +2139,9 @@ class BulkDownloader:
         l_debug_messages = False
 
         # CRITICAL SECTION ENTRY --------------------------------------------------------------------------------------
-        self.m_logger.info('CS Entry ---------')
+        self.m_logger.info('CS Entry ----B----')
         p_lock.acquire()
+        self.m_logger.info('CS Entry ----A----')
 
         l_media_list = []
         # try block to ensure that CS lock is released
@@ -2214,8 +2218,10 @@ class BulkDownloader:
             raise
         finally:
             # CRITICAL SECTION EXIT -----------------------------------------------------------------------------------
+            self.m_logger.info('CS Exit ----B----')
             p_lock.release()
-            self.m_logger.info('CS Exit ---------')
+            time.sleep(.01)
+            self.m_logger.info('CS Exit ----A----')
 
         # image index within the batch
         l_img_count = 0
