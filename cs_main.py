@@ -820,10 +820,8 @@ class CsApp:
                                 ,"TX_PICTURE"
                                 ,"TX_FULL_PICTURE"
                                 ,"TX_BASE64"
-                                ,"TX_BASE64_PIC"
                                 ,"TX_BASE64_FP"
                                 ,"ST_FORMAT"
-                                ,"ST_FORMAT_PIC"
                                 ,"ST_FORMAT_FP"
                                 ,"TX_TEXT"
                                 ,"TX_VOCABULARY"
@@ -842,10 +840,8 @@ class CsApp:
                     l_picture,\
                     l_full_picture,\
                     l_base_64, \
-                    l_base_64_pic, \
                     l_base_64_fp,\
                     l_fmt,\
-                    l_fmt_pic,\
                     l_fmt_fp,\
                     l_text,\
                     l_vocabulary\
