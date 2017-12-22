@@ -736,6 +736,7 @@ class CsApp:
         self.m_logger.info('l_post_id: {0}'.format(l_post_id))
         self.m_logger.info('l_comment_id: {0}'.format(l_comment_id))
 
+        l_comments_count = 0
         l_conn = EcConnectionPool.get_global_pool().getconn('one_post()')
         l_cursor = l_conn.cursor()
         try:
@@ -784,7 +785,7 @@ class CsApp:
                 l_message, \
                 l_likes, \
                 l_shares,\
-                l_comments,\
+                l_comments_count,\
                 l_img_count,\
                 l_user_name,\
                 l_page_name,\
@@ -994,7 +995,7 @@ class CsApp:
                     l_message,  # 8
                     fmt_int_none(l_likes),  # 9
                     fmt_int_none(l_shares),  # 10
-                    fmt_int_none(l_comments),  # 11
+                    fmt_int_none(l_comments_count),  # 11
                     l_img_string,  # 12
                     l_user_name,  # 13
                     l_page_name,  # 14
@@ -1008,7 +1009,9 @@ class CsApp:
         EcConnectionPool.get_global_pool().putconn(l_conn)
 
         # Comments
-        l_comments, _, _ = self.get_comments(l_post_id, l_comment_id, 1)
+        l_comments = ''
+        if l_comments_count > 0:
+            l_comments, _, _ = self.get_comments(l_post_id, l_comment_id, 1)
 
         return """
             <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" >
@@ -1111,6 +1114,7 @@ class CsApp:
                         ,"O"."DT_CRE"
                         ,"O"."TX_MESSAGE"
                         ,"O"."N_LIKES"
+                        ,"O"."N_COMM"
                         ,"M"."ST_FORMAT"
                         ,"M"."TX_BASE64"
                         ,"M"."TX_TEXT"
@@ -1138,6 +1142,7 @@ class CsApp:
                     l_dt, \
                     l_msg, \
                     l_likes, \
+                    l_comments_count, \
                     l_fmt, \
                     l_b64, \
                     l_txt, \
@@ -1221,8 +1226,10 @@ class CsApp:
                     ''  # l_categories  # 11
                 )
 
-                l_html_add, l_bkg_id, l_img_fifo = \
-                    self.get_comments(l_id, p_comment_anchor_id, p_depth+1, l_bkg_id, l_img_fifo)
+                l_html_add = ''
+                if l_comments_count > 0:
+                    l_html_add, l_bkg_id, l_img_fifo = \
+                        self.get_comments(l_id, p_comment_anchor_id, p_depth+1, l_bkg_id, l_img_fifo)
 
                 l_html += l_html_add
 

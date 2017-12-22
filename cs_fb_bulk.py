@@ -104,10 +104,10 @@ class BulkDownloader:
         self.m_threads_proceed = True
 
         # Spell Checker should not complain ... Grrrr
-        self.m_long_token = [
-            ('EAAVaTJxF5KoBAOcgCLzHuyKd1jnryxefnjRW21kHO4ZAuZA9TsnnjI0JPjrAFRuT5NXUkPhuPf1FsuZCjU' +
-             '49kvbqZBlpT2mCmaXA0d4JEEUppWi6sCKvt6AW3uULlJtQYHo6gfAMBIzmTdYFdAKf0FgTas2m06H8879xIdgMmwZDZD',
-                datetime.datetime.strptime('21/12/2017', '%d/%m/%Y')) ,
+        self.m_long_token = [ #
+            ('EAAVaTJxF5KoBAOrpauROw3AXwh8b7mG3P5NZBKfw8lFg0WIZABaI2ZBB4dh4IYt30uKA9sqgSxpFs4RuMGvxo' +
+             'SXSnKGyJkEd5Tpec0uekJpjQYuRXtJa7x3MkmhfHHA5t9kWwOuQLyfZC4pNcRTYWdcGzQM5E7N2TTeO9PKAFwZDZD',
+                datetime.datetime.strptime('20/02/2018', '%d/%m/%Y')) ,
             ('EAAVaTJxF5KoBALqGzY8z8q645BRmTqCobXcmoZBY1lTLNDRA9L3XAfqpbytb8QDjCsDFnCh0v39wg4F0kvOKao' +
              'bWwZAVLzfIE3tm7RZCkLaTRBRnTjldcd7UvUXlyOdB8Opgsl90LSkMnFdOz6IDQnLPGGqQ5wBZB5Kz9YZCp6gZDZD',
                 datetime.datetime.strptime('25/01/2018', '%d/%m/%Y')),
