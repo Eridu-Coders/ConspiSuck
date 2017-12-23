@@ -104,7 +104,7 @@ class BulkDownloader:
         self.m_threads_proceed = True
 
         # Spell Checker should not complain ... Grrrr
-        self.m_long_token = [ #
+        self.m_long_token = [
             ('EAAVaTJxF5KoBAOrpauROw3AXwh8b7mG3P5NZBKfw8lFg0WIZABaI2ZBB4dh4IYt30uKA9sqgSxpFs4RuMGvxo' +
              'SXSnKGyJkEd5Tpec0uekJpjQYuRXtJa7x3MkmhfHHA5t9kWwOuQLyfZC4pNcRTYWdcGzQM5E7N2TTeO9PKAFwZDZD',
                 datetime.datetime.strptime('20/02/2018', '%d/%m/%Y')) ,
@@ -1277,6 +1277,7 @@ class BulkDownloader:
             l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.repeat_posts_update()')
             l_cursor = l_conn.cursor()
 
+            # counting posts to be updated
             l_count = 0
             try:
                 l_cursor.execute("""
@@ -2674,9 +2675,7 @@ class BulkDownloader:
         :return: The response to the request from the FB API server (some JSON string).
         """
 
-        # no longer relevant but kept so far ...
-        self.m_logger.info('Start perform_request() Cycle: {0}'.format(
-            self.m_FBRequestCount % EcAppParam.gcm_token_lifespan))
+        self.m_logger.info('Start perform_request() Count: {0:,.0f}'.format(self.m_FBRequestCount))
 
         l_token = self.m_long_token[self.m_FBRequestCount % len(self.m_long_token)][0]
 
@@ -2843,9 +2842,7 @@ class BulkDownloader:
                 time.sleep(1)
                 l_err_count += 1
 
-        # no longer needed but kept for the time being
-        self.m_logger.debug('End perform_request() Cycle: {0}'.format(
-            self.m_FBRequestCount % EcAppParam.gcm_token_lifespan))
+        self.m_logger.debug('End perform_request() Count: {0:,.0f}'.format(self.m_FBRequestCount))
         return l_response
 
     def get_wait(self, p_error_count):
