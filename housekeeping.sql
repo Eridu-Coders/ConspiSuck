@@ -118,4 +118,4 @@ from (
 ) as "C"
 where "O"."ID" = "C"."ID_FATHER" and DATE_PART('day', now()::date - "O"."DT_CRE") <= 30;
 
-VACUUM FULL ANALYZE;
+VACUUM FULL ANALYSE;
