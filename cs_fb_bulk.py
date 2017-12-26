@@ -326,6 +326,25 @@ class BulkDownloader:
 
             self.m_logger.info('*** End Housekeeping Queries ***')
 
+        # Vacuum Analyse ----------------------------------------------------------------------------------------------
+        self.m_logger.info('*** Database Vacuum ***')
+        l_connect = psycopg2.connect(
+            host=EcAppParam.gcm_dbServer,
+            database=EcAppParam.gcm_dbDatabase,
+            user=EcAppParam.gcm_dbUser,
+            password=EcAppParam.gcm_dbPassword
+        )
+        l_connect.autocommit = False
+        l_cursor_vacuum = l_connect.cursor()
+        try:
+            l_cursor_vacuum.execute('VACUUM FULL ANALYSE')
+            self.m_logger.info('Database Vacuum Success')
+        except psycopg2.Error as e:
+            self.m_logger.warning('Vacuum request failure: ' + repr(e))
+        finally:
+            l_cursor_vacuum.close()
+            l_connect.close()
+
         # System backup -----------------------------------------------------------------------------------------------
         if LocalParam.gcm_doSystemBackup and not p_minimal:
             self.m_logger.info('*** Performing system backup ***')
