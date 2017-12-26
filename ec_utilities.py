@@ -120,18 +120,24 @@ class EcLogger(logging.Logger):
         l_debug_table = 'TB_EC_DEBUG' if LocalParam.gcm_prodEnv else 'TB_EC_DEBUG_DEV'
         l_env_code = 'PRD' if LocalParam.gcm_prodEnv else 'DEV'
 
+        print('l_debug_table : ' + l_debug_table)
+        print('l_env_code    : ' + l_env_code)
+
         # purge TB_EC_DEBUG (only if main process)
         if p_purge and multiprocessing.current_process().name == 'Z':
             l_conn = EcConnectionPool.get_global_pool().getconn('EcLogger.log_init()')
             l_cursor = l_conn.cursor()
             try:
+                print('Delete old Debug BKP: ' + multiprocessing.current_process().name)
                 l_cursor.execute('delete from "TB_EC_DEBUG_BKP" where "ST_ENV" = \'{0}\''.format(l_env_code))
                 l_conn.commit()
 
+                print('Save previous Debug: ' + multiprocessing.current_process().name)
                 l_cursor.execute('insert into "TB_EC_DEBUG_BKP" select *, \'{0}\' from "{1}"'.format(
                     l_env_code, l_debug_table))
                 l_conn.commit()
 
+                print('Purge Debug: ' + multiprocessing.current_process().name)
                 l_cursor.execute('delete from "{0}"'.format(l_debug_table))
                 l_conn.commit()
             except psycopg2.Error as e:
@@ -146,18 +152,24 @@ class EcLogger(logging.Logger):
 
         # Creates the column headers for the CSV log file
         if LocalParam.gcm_debugToCSV:
+            print('Create CSV header: ' + multiprocessing.current_process().name)
             l_f_log = open(EcAppParam.gcm_logFile, 'w')
             l_f_log.write('LOGGER_NAME;PROCESS;THREAD;TIME;LEVEL;MODULE;FILE;FUNCTION;LINE;MESSAGE\n')
             l_f_log.close()
 
         # registers the EcLogger class with the logging system
+        print('setLoggerClass(): ' + multiprocessing.current_process().name)
         logging.setLoggerClass(EcLogger)
 
         # Create the main logger
+        print('getLogger(): ' + multiprocessing.current_process().name)
         cls.cm_logger = logging.getLogger()
 
         # One handler for the console (only up to INFO messages) and another for the CSV file (everything)
+        print('Stream Handler: ' + multiprocessing.current_process().name)
         l_handler_console = logging.StreamHandler()
+
+        print('File Handler: ' + multiprocessing.current_process().name)
         if LocalParam.gcm_debugToCSV:
             l_handler_file = logging.FileHandler(EcAppParam.gcm_logFile, mode='a')
         else:
@@ -301,14 +313,17 @@ class EcLogger(logging.Logger):
                 return l_formatted
 
         # Install formatters
+        print('Console Formatter: ' + multiprocessing.current_process().name)
         l_handler_console.setFormatter(
             EcConsoleFormatter('ECL:%(levelname)s:%(name)s:%(processName)s:%(threadName)s:%(funcName)s:%(message)s'))
 
+        print('File Formatter: ' + multiprocessing.current_process().name)
         l_handler_file.setFormatter(
                 EcCsvFormatter('"%(name)s";"%(processName)s";"%(threadName)s";"%(asctime)s";"%(levelname)s";' +
                                '"%(module)s";"%(filename)s";"%(funcName)s";%(lineno)d;"%(message)s"'))
 
         # If verbose mode on, both handlers receive messages up to INFO
+        print('Verbosity levels: ' + multiprocessing.current_process().name)
         if EcAppParam.gcm_verboseModeOn:
             cls.cm_logger.setLevel(logging.INFO)
             l_handler_console.setLevel(logging.INFO)
@@ -321,7 +336,9 @@ class EcLogger(logging.Logger):
             l_handler_file.setLevel(logging.DEBUG)
 
         # Install the handlers
+        print('Add console handler: ' + multiprocessing.current_process().name)
         cls.cm_logger.addHandler(l_handler_console)
+        print('Add CSV handler: ' + multiprocessing.current_process().name)
         cls.cm_logger.addHandler(l_handler_file)
 
         # Start-up Messages

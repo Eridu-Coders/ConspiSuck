@@ -1106,6 +1106,7 @@ class CsApp:
         l_conn = EcConnectionPool.get_global_pool().getconn('get_comments()')
         l_cursor = l_conn.cursor()
         l_html = ''
+        t0 = time.perf_counter()
         try:
             l_cursor.execute(
                 """
@@ -1239,6 +1240,10 @@ class CsApp:
 
         l_cursor.close()
         EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        l_html += '<div style="color: red;">{0}</div>'.format(
+            '{:,.2f}'.format(time.perf_counter() - t0)
+        )
 
         return l_html, l_bkg_id, l_img_fifo
 
