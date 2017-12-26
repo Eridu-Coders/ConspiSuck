@@ -1121,7 +1121,7 @@ class CsApp:
                         ,"M"."TX_TEXT"
                         ,"M"."TX_VOCABULARY"
                         ,"M"."TX_MEDIA_SRC"
-                        ,"U"."ST_NAME"
+                        ,"S"."ST_NAME"
                         ,"O"."ID_USER"
                         ,"S"."LIKES_COUNT" 
                         ,"S"."POSTS_COUNT" 
@@ -1131,13 +1131,15 @@ class CsApp:
                     from 
                         "TB_OBJ" as "O"
                         left outer join "TB_MEDIA" as "M" on "O"."ID" = "M"."ID_OWNER"
-                        left outer join "TB_USER_UNIQUE" as "U" on "O"."ID_USER" = "U"."ID"
                         left outer join "TB_USER_STATS" as "S" on "O"."ID_USER" = "S"."ID"
                     where "O"."ID_FATHER" = %s and "O"."ST_TYPE"='Comm'
                     order by "O"."DT_CRE";
                 """, (p_parent_id,)
             )
+            t1 = time.perf_counter()
 
+            l_time_proc = 0
+            l_time_sub = 0
             for \
                     l_id, \
                     l_dt, \
@@ -1157,6 +1159,8 @@ class CsApp:
                     l_user_total_count, \
                     l_user_pages_count \
                             in l_cursor:
+
+                s0 = time.perf_counter()
                 l_color = l_bkg_list[l_bkg_id % len(l_bkg_list)]
 
                 if l_b64 is not None and len(l_b64) > 0:
@@ -1227,12 +1231,18 @@ class CsApp:
                     ''  # l_categories  # 11
                 )
 
+                if not LocalParam.gcm_prodEnv:
+                    l_time_proc += time.perf_counter() - s0
+
+                s0 = time.perf_counter()
                 l_html_add = ''
                 if l_comments_count > 0:
                     l_html_add, l_bkg_id, l_img_fifo = \
                         self.get_comments(l_id, p_comment_anchor_id, p_depth+1, l_bkg_id, l_img_fifo)
 
                 l_html += l_html_add
+                if not LocalParam.gcm_prodEnv:
+                    l_time_sub += time.perf_counter() - s0
 
         except Exception as e:
             self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
@@ -1241,9 +1251,15 @@ class CsApp:
         l_cursor.close()
         EcConnectionPool.get_global_pool().putconn(l_conn)
 
-        l_html += '<div style="color: red;">{0}</div>'.format(
-            '{:,.2f}'.format(time.perf_counter() - t0)
-        )
+        if not LocalParam.gcm_prodEnv:
+            l_html += '<div style="color: red; font-family:monospace; ' + \
+                      'margin-left: {0}em;">'.format((p_depth-1)*2 + 1) + \
+                      '{0}/{1}/{2} --> {3}</div>'.format(
+                            '{:,.3f}'.format(t1 - t0),
+                            '{:,.3f}'.format(l_time_proc),
+                            '{:,.3f}'.format(l_time_sub),
+                            '{:,.3f}'.format(time.perf_counter() - t0)
+                      )
 
         return l_html, l_bkg_id, l_img_fifo
 
