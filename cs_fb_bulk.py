@@ -334,7 +334,7 @@ class BulkDownloader:
             user=EcAppParam.gcm_dbUser,
             password=EcAppParam.gcm_dbPassword
         )
-        l_connect.autocommit = False
+        l_connect.autocommit = True
         l_cursor_vacuum = l_connect.cursor()
         try:
             l_cursor_vacuum.execute('VACUUM FULL ANALYSE')
