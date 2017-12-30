@@ -24,8 +24,15 @@ __author__ = 'Pavan Mahalingam'
 
 
 class BulkDownloaderException(Exception):
-    pass
+    def __init__(self, p_message):
+        super(BulkDownloaderException, self).__init__(p_message)
 
+class PageIDMigration(Exception):
+    def __init__(self, p_message, p_old_id, p_new_id):
+        self.m_old_id = p_old_id
+        self.m_new_id = p_new_id
+
+        super(PageIDMigration, self).__init__(p_message)
 
 class BulkDownloader:
     """
@@ -200,22 +207,17 @@ class BulkDownloader:
             self.m_likes_details_process.append(p)
             p.start()
 
-        # self.m_logger.info('Likes details process(es) launched')
-
         # OCR process
-        if EcAppParam.gcm_ocr_thread:
-            self.m_ocr_lock = multiprocessing.Lock()
-            # lock is acquired to block the process start
-            self.m_ocr_lock.acquire()
-            for l_process_number in range(self.m_ocr_process_count):
-                p = multiprocessing.Process(target=self.repeat_ocr_image, args=(self.m_ocr_lock,))
-                p.name = 'O{0}'.format(l_process_number)
-                self.m_ocr_process.append(p)
-                p.start()
+        self.m_ocr_lock = multiprocessing.Lock()
+        # lock is acquired to block the process start
+        self.m_ocr_lock.acquire()
+        for l_process_number in range(self.m_ocr_process_count):
+            p = multiprocessing.Process(target=self.repeat_ocr_image, args=(self.m_ocr_lock,))
+            p.name = 'O{0}'.format(l_process_number)
+            self.m_ocr_process.append(p)
+            p.start()
 
-            # self.m_logger.info('OCR process(es) launched')
-
-        print('BulkDownloader.start_processes() End')
+        print('BulkDownloader.start_processes() End: ' + multiprocessing.current_process().name)
 
     def process_watchdog(self):
         """
@@ -293,6 +295,8 @@ class BulkDownloader:
         :return:
         """
 
+        self.m_logger.info('tasks_before_start() Start')
+
         # ConspiSuck DB Housekeeping queries --------------------------------------------------------------------------
         if not p_minimal:
             with open(os.path.join(LocalParam.gcm_appRoot, 'housekeeping.sql'), 'r') as f:
@@ -326,35 +330,35 @@ class BulkDownloader:
 
             self.m_logger.info('*** End Housekeeping Queries ***')
 
-        # Vacuum Analyse ----------------------------------------------------------------------------------------------
-        self.m_logger.info('*** Database Vacuum ***')
-        l_connect = psycopg2.connect(
-            host=EcAppParam.gcm_dbServer,
-            database=EcAppParam.gcm_dbDatabase,
-            user=EcAppParam.gcm_dbUser,
-            password=EcAppParam.gcm_dbPassword
-        )
-        l_connect.autocommit = True
-        l_cursor_vacuum = l_connect.cursor()
-        try:
-            l_cursor_vacuum.execute('VACUUM FULL ANALYSE')
-            self.m_logger.info('Database Vacuum Success')
-        except psycopg2.Error as e:
-            self.m_logger.warning('Vacuum request failure: ' + repr(e))
-        finally:
-            l_cursor_vacuum.close()
-            l_connect.close()
-
-        # System backup -----------------------------------------------------------------------------------------------
-        if LocalParam.gcm_doSystemBackup and not p_minimal:
-            self.m_logger.info('*** Performing system backup ***')
-            l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py -q'
-            # l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py --dbOnly'
+            # Vacuum Analyse ------------------------------------------------------------------------------------------
+            self.m_logger.info('*** Database Vacuum ***')
+            l_connect = psycopg2.connect(
+                host=EcAppParam.gcm_dbServer,
+                database=EcAppParam.gcm_dbDatabase,
+                user=EcAppParam.gcm_dbUser,
+                password=EcAppParam.gcm_dbPassword
+            )
+            l_connect.autocommit = True
+            l_cursor_vacuum = l_connect.cursor()
             try:
-                subprocess.call(l_bkp_cmd.split(' '))
-            except subprocess.CalledProcessError as e:
-                self.m_logger.warning('System backup - Error return code: {0}'.format(e.returncode))
-            self.m_logger.info('*** End system backup ***')
+                l_cursor_vacuum.execute('VACUUM FULL ANALYSE')
+                self.m_logger.info('Database Vacuum Success')
+            except psycopg2.Error as e:
+                self.m_logger.warning('Vacuum request failure: ' + repr(e))
+            finally:
+                l_cursor_vacuum.close()
+                l_connect.close()
+
+            # System backup -------------------------------------------------------------------------------------------
+            if LocalParam.gcm_doSystemBackup and not p_minimal:
+                self.m_logger.info('*** Performing system backup ***')
+                l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py -q'
+                # l_bkp_cmd = '/home/fi11222/DailyBkpIII/daily_backup.py --dbOnly'
+                try:
+                    subprocess.call(l_bkp_cmd.split(' '))
+                except subprocess.CalledProcessError as e:
+                    self.m_logger.warning('System backup - Error return code: {0}'.format(e.returncode))
+                self.m_logger.info('*** End system backup ***')
 
         # clear the locking flags -------------------------------------------------------------------------------------
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.tasks_before_start() TB_OBJ')
@@ -384,6 +388,7 @@ class BulkDownloader:
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.tasks_before_start() TB_MEDIA')
         l_cursor_write = l_conn_write.cursor()
 
+        self.m_logger.info('Cleaning locks on TB_MEDIA')
         try:
             l_cursor_write.execute("""
                 update
@@ -404,6 +409,8 @@ class BulkDownloader:
             l_cursor_write.close()
             EcConnectionPool.get_global_pool().putconn(l_conn_write)
 
+        self.m_logger.info('tasks_before_start() End')
+
     def bulk_download(self):
         """
         Performs the core of the bulk-downloading tasks: New pages and new posts downloading.
@@ -423,13 +430,12 @@ class BulkDownloader:
         self.m_logger.info('likes processes init complete')
         self.m_likes_lock.release()
 
-        if self.m_ocr_lock is not None:
-            self.m_logger.info('Release OCR processes')
-            self.m_ocr_lock.release()
-            time.sleep(1)
-            self.m_ocr_lock.acquire()
-            self.m_logger.info('OCR processes init complete')
-            self.m_ocr_lock.release()
+        self.m_logger.info('Release OCR processes')
+        self.m_ocr_lock.release()
+        time.sleep(1)
+        self.m_ocr_lock.acquire()
+        self.m_logger.info('OCR processes init complete')
+        self.m_ocr_lock.release()
 
         # Launch threads
         self.start_threads()
@@ -445,10 +451,11 @@ class BulkDownloader:
             if self.m_gat_pages:
                 self.get_pages()
 
-            try:
-                self.get_posts()
-            except BulkDownloaderException as e:
-                self.m_logger.warning('bulk_download main loop exception capture: ' + repr(e))
+            if LocalParam.gcm_do_posts:
+                try:
+                    self.get_posts()
+                except BulkDownloaderException as e:
+                    self.m_logger.warning('bulk_download main loop exception capture: ' + repr(e))
 
             # reboot ?
             self.m_logger.info('*** RBTEST Reboot Test ***')
@@ -658,7 +665,20 @@ class BulkDownloader:
             # store the current page name for future reference (debug displays mostly)
             self.m_page = l_name
             # get posts from the current page
-            self.get_posts_from_page(l_id)
+            try:
+                self.get_posts_from_page(l_id)
+            except PageIDMigration as e:
+                l_old_id = e.m_old_id
+                l_new_id = e.m_new_id
+                self.m_logger.info('Migrating Page index from [{0}] to [{1}] Name: {2}'.format(
+                    l_old_id, l_new_id, l_name
+                ))
+
+                # record the ID change in the DB
+                self.migrate_id_page(l_old_id, l_new_id, l_name)
+
+                # redo the query with the new ID
+                self.get_posts_from_page(l_new_id)
 
             # Wait 1 second btw pages
             time.sleep(1)
@@ -711,145 +731,14 @@ class BulkDownloader:
                 # increment the total number of posts retrieved
                 self.m_postRetrieved += 1
 
-                # basic post data items
-                l_post_id = l_post['id']
-                l_post_date = l_post['created_time']
-                l_type = l_post['type']
-                l_shares = int(l_post['shares']['count']) if 'shares' in l_post.keys() else 0
                 self.m_logger.info(
                     '   =====[ {0}/{1} ]================POST========================='.format(
                         l_post_count, self.m_page))
-                self.m_logger.info('   id          : ' + l_post_id)
-                self.m_logger.info('   date        : ' + l_post_date)
 
-                # decode the date format of the post creation date --> Python datetime
-                # 2016-04-22T12:03:06+0000
-                l_msg_date = datetime.datetime.strptime(
-                    re.sub(r'\+\d+$', '', l_post_date), '%Y-%m-%dT%H:%M:%S')
-                self.m_logger.info('   date (P)    : {0}'.format(l_msg_date))
+                l_finished = self.process_one_post(p_id, l_post)
 
-                # if message older than gcm_days_depth days ---> break loop
-                l_days_old = (datetime.datetime.now() - l_msg_date).days
-                self.m_logger.info('   Days old    : {0}'.format(l_days_old))
-                if l_days_old > EcAppParam.gcm_days_depth:
-                    self.m_logger.info(
-                        '   ---> Too old, stop getting posts from page [{0}]'.format(self.m_page))
-                    l_finished = True  # break the outer paging loop
-                    break
-
-                # gets the author (FB user) of the post
-                l_user_id = ''
-                if 'from' in l_post.keys():
-                    l_user_id, x = BulkDownloader.get_optional_field(l_post['from'], 'id')
-                    l_user_name, l_user_name_short = BulkDownloader.get_optional_field(l_post['from'], 'name')
-
-                    if EcAppParam.gcm_verboseModeOn:
-                        self.m_logger.info('   from        : {0} [{1}]'.format(l_user_name_short, l_user_id))
-
-                    # store user data
-                    self.store_user(l_user_id, l_user_name, l_post_date, '   ')
-
-                # get additional data from the post
-                l_name, l_name_short = BulkDownloader.get_optional_field(l_post, 'name')
-                l_caption, l_caption_short = BulkDownloader.get_optional_field(l_post, 'caption')
-                l_description, l_description_sh = BulkDownloader.get_optional_field(l_post, 'description')
-                l_story, l_story_short = BulkDownloader.get_optional_field(l_post, 'story')
-                l_message, l_message_short = BulkDownloader.get_optional_field(l_post, 'message')
-
-                l_object_id, x = BulkDownloader.get_optional_field(l_post, 'object_id')
-                l_parent_id, x = BulkDownloader.get_optional_field(l_post, 'parent_id')
-                l_link, x = BulkDownloader.get_optional_field(l_post, 'link')
-                l_picture, x = BulkDownloader.get_optional_field(l_post, 'picture')
-                l_full_picture, x = BulkDownloader.get_optional_field(l_post, 'full_picture')
-                l_source, x = BulkDownloader.get_optional_field(l_post, 'source')
-
-                l_icon, x = BulkDownloader.get_optional_field(l_post, 'icon')
-                l_permalink_url, x = BulkDownloader.get_optional_field(l_post, 'permalink_url')
-                l_status_type, x = BulkDownloader.get_optional_field(l_post, 'status_type')
-                l_updated_time, x = BulkDownloader.get_optional_field(l_post, 'updated_time')
-
-                # additional post data requiring JSON decoding
-                l_place = ''
-                if 'place' in l_post.keys():
-                    l_place = json.dumps(l_post['place'])
-
-                l_tags = ''
-                if 'message_tags' in l_post.keys():
-                    l_tags = json.dumps(l_post['message_tags'])
-
-                l_with_tags = ''
-                if 'with_tags' in l_post.keys():
-                    l_with_tags = json.dumps(l_post['with_tags'])
-
-                l_properties = ''
-                if 'properties' in l_post.keys():
-                    l_properties = json.dumps(l_post['properties'])
-
-                # debug display of post data
-                self.m_logger.info('   name        : ' + l_name_short)
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('   caption     : ' + l_caption_short)
-                    self.m_logger.info('   description : ' + l_description_sh)
-                    self.m_logger.info('   story       : ' + l_story_short)
-                    self.m_logger.info('   message     : ' + l_message_short)
-                    self.m_logger.info('   permalink   : ' + l_permalink_url)
-                    self.m_logger.info('   icon        : ' + l_icon)
-                    self.m_logger.info('   object_id   : ' + l_object_id)
-                    self.m_logger.info('   parent_id   : ' + l_parent_id)
-                    self.m_logger.info('   shares      : {0}'.format(l_shares))
-                    self.m_logger.info('   type        : ' + l_type)
-                    self.m_logger.info('   updated time: ' + l_updated_time)
-                    self.m_logger.info('   with        : {0}'.format(l_with_tags))
-                    self.m_logger.info('   tags        : {0}'.format(l_tags))
-                    self.m_logger.info('   place       : {0}'.format(l_place))
-                    self.m_logger.info('   picture     : {0}'.format(l_picture))
-                    self.m_logger.info('   full pic.   : {0}'.format(l_full_picture))
-                    self.m_logger.info('   keys        : {0}'.format(l_post.keys()))
-
-                # store post information
-                if self.store_object(
-                        p_padding='   ',
-                        p_type='Post',
-                        p_date_creation=l_post_date,
-                        p_date_modification=l_updated_time,
-                        p_id=l_post_id,
-                        p_parent_id=p_id,
-                        p_page_id=p_id,
-                        p_post_id='',
-                        p_fb_type=l_type,
-                        p_fb_status_type=l_status_type,
-                        p_share_count=l_shares,
-                        p_like_count=0,
-                        p_permalink_url=l_permalink_url,
-                        p_name=l_name,
-                        p_caption=l_caption,
-                        p_desc=l_description,
-                        p_story=l_story,
-                        p_message=l_message,
-                        p_fb_parent_id=l_parent_id,
-                        p_fb_object_id=l_object_id,
-                        p_link=l_link,
-                        p_place=l_place,
-                        p_source=l_source,
-                        p_user_id=l_user_id,
-                        p_tags=l_tags,
-                        p_with_tags=l_with_tags,
-                        p_properties=l_properties):
-
-                    # get attachments and comments only if the storage of the post was successful, i.e. if
-                    # the post was a new one
-                    self.get_post_attachments(
-                        l_post_id, l_post_id, l_status_type, l_source,
-                        l_link, l_picture, l_full_picture, l_properties)
-                    self.get_comments(l_post_id, l_post_id, p_id, 0)
-
-                    if len(l_parent_id) > 0:
-                        self.get_parent_post(l_post_id, l_parent_id)
-                else:
-                    # if already in DB ---> break loop because it means new posts are now exhausted
-                    self.m_logger.info(
-                        '   ---> Post already in DB, stop getting posts from page [{0}]'.format(self.m_page))
-                    l_finished = True  # also break outer paging loop
+                # break the inner for loop
+                if l_finished:
                     break
 
                 l_post_count += 1
@@ -873,6 +762,155 @@ class BulkDownloader:
         # end while not l_finished: (outer loop to handle paging)
 
         self.m_logger.info('End getPostsFromPage()')
+
+    def process_one_post(self, p_id_page, p_post_json):
+        """
+
+        :param p_id_page:
+        :param p_post_json:
+        :return:
+        """
+        l_finished = False
+
+        # basic post data items
+        l_post_id = p_post_json['id']
+        l_post_date = p_post_json['created_time']
+        l_type = p_post_json['type']
+        l_shares = int(p_post_json['shares']['count']) if 'shares' in p_post_json.keys() else 0
+
+        self.m_logger.info('   id          : ' + l_post_id)
+        self.m_logger.info('   date        : ' + l_post_date)
+
+        # decode the date format of the post creation date --> Python datetime
+        # 2016-04-22T12:03:06+0000
+        l_msg_date = datetime.datetime.strptime(
+            re.sub(r'\+\d+$', '', l_post_date), '%Y-%m-%dT%H:%M:%S')
+        self.m_logger.info('   date (P)    : {0}'.format(l_msg_date))
+
+        # if message older than gcm_days_depth days ---> break loop
+        l_days_old = (datetime.datetime.now() - l_msg_date).days
+        self.m_logger.info('   Days old    : {0}'.format(l_days_old))
+        if l_days_old > EcAppParam.gcm_days_depth:
+            self.m_logger.info(
+                '   ---> Too old, stop getting posts from page [{0}]'.format(self.m_page))
+            l_finished = True  # break the outer paging loop
+        else:
+            # gets the author (FB user) of the post
+            l_user_id = ''
+            if 'from' in p_post_json.keys():
+                l_user_id, x = BulkDownloader.get_optional_field(p_post_json['from'], 'id')
+                l_user_name, l_user_name_short = BulkDownloader.get_optional_field(p_post_json['from'], 'name')
+
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('   from        : {0} [{1}]'.format(l_user_name_short, l_user_id))
+
+                # store user data
+                self.store_user(l_user_id, l_user_name, l_post_date, '   ')
+
+            # get additional data from the post
+            l_name, l_name_short = BulkDownloader.get_optional_field(p_post_json, 'name')
+            l_caption, l_caption_short = BulkDownloader.get_optional_field(p_post_json, 'caption')
+            l_description, l_description_sh = BulkDownloader.get_optional_field(p_post_json, 'description')
+            l_story, l_story_short = BulkDownloader.get_optional_field(p_post_json, 'story')
+            l_message, l_message_short = BulkDownloader.get_optional_field(p_post_json, 'message')
+
+            l_object_id, x = BulkDownloader.get_optional_field(p_post_json, 'object_id')
+            l_parent_id, x = BulkDownloader.get_optional_field(p_post_json, 'parent_id')
+            l_link, x = BulkDownloader.get_optional_field(p_post_json, 'link')
+            l_picture, x = BulkDownloader.get_optional_field(p_post_json, 'picture')
+            l_full_picture, x = BulkDownloader.get_optional_field(p_post_json, 'full_picture')
+            l_source, x = BulkDownloader.get_optional_field(p_post_json, 'source')
+
+            l_icon, x = BulkDownloader.get_optional_field(p_post_json, 'icon')
+            l_permalink_url, x = BulkDownloader.get_optional_field(p_post_json, 'permalink_url')
+            l_status_type, x = BulkDownloader.get_optional_field(p_post_json, 'status_type')
+            l_updated_time, x = BulkDownloader.get_optional_field(p_post_json, 'updated_time')
+
+            # additional post data requiring JSON decoding
+            l_place = ''
+            if 'place' in p_post_json.keys():
+                l_place = json.dumps(p_post_json['place'])
+
+            l_tags = ''
+            if 'message_tags' in p_post_json.keys():
+                l_tags = json.dumps(p_post_json['message_tags'])
+
+            l_with_tags = ''
+            if 'with_tags' in p_post_json.keys():
+                l_with_tags = json.dumps(p_post_json['with_tags'])
+
+            l_properties = ''
+            if 'properties' in p_post_json.keys():
+                l_properties = json.dumps(p_post_json['properties'])
+
+            # debug display of post data
+            self.m_logger.info('   name        : ' + l_name_short)
+            if EcAppParam.gcm_verboseModeOn:
+                self.m_logger.info('   caption     : ' + l_caption_short)
+                self.m_logger.info('   description : ' + l_description_sh)
+                self.m_logger.info('   story       : ' + l_story_short)
+                self.m_logger.info('   message     : ' + l_message_short)
+                self.m_logger.info('   permalink   : ' + l_permalink_url)
+                self.m_logger.info('   icon        : ' + l_icon)
+                self.m_logger.info('   object_id   : ' + l_object_id)
+                self.m_logger.info('   parent_id   : ' + l_parent_id)
+                self.m_logger.info('   shares      : {0}'.format(l_shares))
+                self.m_logger.info('   type        : ' + l_type)
+                self.m_logger.info('   updated time: ' + l_updated_time)
+                self.m_logger.info('   with        : {0}'.format(l_with_tags))
+                self.m_logger.info('   tags        : {0}'.format(l_tags))
+                self.m_logger.info('   place       : {0}'.format(l_place))
+                self.m_logger.info('   picture     : {0}'.format(l_picture))
+                self.m_logger.info('   full pic.   : {0}'.format(l_full_picture))
+                self.m_logger.info('   keys        : {0}'.format(p_post_json.keys()))
+
+            # store post information
+            if self.store_object(
+                    p_padding='   ',
+                    p_type='Post',
+                    p_date_creation=l_post_date,
+                    p_date_modification=l_updated_time,
+                    p_id=l_post_id,
+                    p_parent_id=p_id_page,
+                    p_page_id=p_id_page,
+                    p_post_id='',
+                    p_fb_type=l_type,
+                    p_fb_status_type=l_status_type,
+                    p_share_count=l_shares,
+                    p_like_count=0,
+                    p_permalink_url=l_permalink_url,
+                    p_name=l_name,
+                    p_caption=l_caption,
+                    p_desc=l_description,
+                    p_story=l_story,
+                    p_message=l_message,
+                    p_fb_parent_id=l_parent_id,
+                    p_fb_object_id=l_object_id,
+                    p_link=l_link,
+                    p_place=l_place,
+                    p_source=l_source,
+                    p_user_id=l_user_id,
+                    p_tags=l_tags,
+                    p_with_tags=l_with_tags,
+                    p_properties=l_properties):
+
+                # get attachments and comments only if the storage of the post was successful, i.e. if
+                # the post was a new one
+                self.get_post_attachments(
+                    l_post_id, l_post_id, l_status_type, l_source,
+                    l_link, l_picture, l_full_picture, l_properties)
+
+                self.get_comments(l_post_id, l_post_id, p_id_page, 0)
+
+                if len(l_parent_id) > 0:
+                    self.get_parent_post(l_post_id, l_parent_id)
+            else:
+                # if already in DB ---> break loop because it means new posts are now exhausted
+                self.m_logger.info(
+                    '   ---> Post already in DB, stop getting posts from page [{0}]'.format(self.m_page))
+                l_finished = True  # also break outer paging loop
+
+        return l_finished
 
     def get_parent_post(self, p_post_id, p_fb_parent_id):
         """
@@ -959,7 +997,7 @@ class BulkDownloader:
                 self.m_logger.info('      type     : {0} FRMTYP [{1}]'.format(l_type, l_user_name))
 
             # store user data
-            self.store_user(l_user_id, l_user_name, l_post_date, '   ')
+            self.store_user(l_user_id, l_user_name, l_post_date, '   ', l_type)
 
         l_properties = ''
         if 'properties' in l_response_data.keys():
@@ -1325,7 +1363,7 @@ class BulkDownloader:
                 l_cursor.close()
                 EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            if l_count > 0:
+            if l_count > 0 and LocalParam.gcm_do_update:
                 try:
                     self.update_posts()
                 except Exception as e:
@@ -1527,7 +1565,7 @@ class BulkDownloader:
                 l_cursor.close()
                 EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            if l_count > 0:
+            if l_count > 0 and LocalParam.gcm_do_likes:
                 try:
                     self.get_likes_detail(p_lock)
                     time.sleep(1)
@@ -1755,16 +1793,16 @@ class BulkDownloader:
                 l_cursor.close()
                 EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            if l_count == 0:
-                # if there were no images to process --> wait 5 minutes
-                time.sleep(5 * 60)
-            else:
+            if l_count > 0 and LocalParam.gcm_do_img:
                 try:
                     self.fetch_images()
                 except Exception as e:
                     self.m_logger.warning('Caught error in repeat_fetch_images() loop: ' + repr(e))
 
                 time.sleep(1)
+            else:
+                # if there were no images to process --> wait 5 minutes
+                time.sleep(5 * 60)
 
     def get_image(self, p_src, p_internal):
         """
@@ -2056,20 +2094,21 @@ class BulkDownloader:
                 l_cursor.close()
                 EcConnectionPool.get_global_pool().putconn(l_conn)
 
-            if l_count == 0:
-                # no OCR --> wait 5 minutes
-                time.sleep(5 * 60)
-            else:
+            if l_count > 0 and LocalParam.gcm_do_ocr:
                 try:
                     self.ocr_images(p_lock)
                 except Exception as e:
                     self.m_logger.warning('Caught Exception in repeat_ocr_image() loop :' + repr(e))
 
                 time.sleep(1)
+            else:
+                # no OCR --> wait 5 minutes
+                time.sleep(5 * 60)
 
     def resume_ocr(self, p_process_number):
         """
 
+        :param p_process_number:
         :return:
         """
         l_id_file_name = os.path.join(LocalParam.gcm_appRoot, 'O{0}_internal_ID.txt'.format(p_process_number))
@@ -2731,6 +2770,31 @@ class BulkDownloader:
         l_finished = False
         while not l_finished:
             try:
+                # test code
+                if not LocalParam.gcm_prodEnv and re.search('100000010000001', l_request):
+                    raise urllib.error.HTTPError(
+                        'xx', 400, 'toto',
+                        json.loads(
+                            '{"x-fb-trace-id": "BZjHtxR+TzV", ' +
+                            '"Access-Control-Allow-Origin": "*", ' +
+                            '"x-fb-rev": "3550898", ' +
+                            '"WWW-Authenticate": "OAuth -Facebook Platform- -invalid_request- ' +
+                            '-Page ID 100000010000001 was migrated to page ID 100000010000002. ' +
+                            'Please update your API calls to the new ID-", ' +
+                            '"facebook-api-version": "v2.10", ' +
+                            '"Cache-Control": "no-store", ' +
+                            '"Content-Type": "text/javascript; charset=UTF-8", ' +
+                            '"Vary": "Accept-Encoding", ' +
+                            '"Pragma": "no-cache", ' +
+                            '"Strict-Transport-Security": "max-age=15552000; preload", ' +
+                            '"X-FB-Debug": "VbA2F2ssEfZzQVrH9ec9dseJz3bg9oo49wTXE6WYvxa' +
+                            '4G5Lt+y8Oj2LWP/sfgC6WcFcmLSDwp8L+TYQJqnf7Dg==", ' +
+                            '"Connection": "close", '
+                            '"Date": "Fri, 29 Dec 2017 10:00:50 GMT", ' +
+                            '"Expires": "Sat, 01 Jan 2000 00:00:00 GMT", ' +
+                            '"Content-Length": "194"}'
+                        ), None)
+
                 l_response = urllib.request.urlopen(l_request, timeout=20).read().decode('utf-8').strip()
                 # self.m_logger.info('l_response: {0}'.format(l_response))
 
@@ -2812,6 +2876,17 @@ class BulkDownloader:
                             l_fb_message, l_response))
 
                         l_finished = True
+
+                    # Page has changed ID
+                    elif re.search('Page\s+ID\s+\d+\s+was\s+migrated\s+to\s+page\s+ID\s+\d+', l_fb_message):
+                        l_match = re.search(
+                            'Page\s+ID\s+(\d+)\s+was\s+migrated\s+to\s+page\s+ID\s+(\d+)', l_fb_message)
+                        l_old_id = l_match.group(1)
+                        l_new_id = l_match.group(2)
+
+                        l_msg = 'Page migrated: {0} --> {1}'.format(l_old_id, l_new_id)
+                        self.m_logger.warning(l_msg)
+                        raise PageIDMigration(l_msg, l_old_id, l_new_id)
 
                     # Other (unknown) FB error --> critical log msg + raise
                     else:
@@ -3073,6 +3148,129 @@ class BulkDownloader:
         self.m_logger.debug('End store_object()')
         return l_stored
 
+    def migrate_id_page(self, p_old_id, p_new_id, p_name):
+        """
+
+        :param p_old_id:
+        :param p_new_id:
+        :param p_name:
+        :return:
+        """
+        self.m_logger.info('migrate_id_page() Start')
+
+        # update TB_PAGES to indicate that the old page ID is no longer to be downloaded
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.migrate_id_page() migration 1')
+        l_cursor_write = l_conn_write.cursor()
+
+        try:
+            l_cursor_write.execute("""
+                update "TB_PAGES"
+                set "F_DNL" = 'N', "F_NON_EXIST" = true
+                where "ID" = %s;
+            """, (p_old_id,))
+
+            l_conn_write.commit()
+        except Exception as e:
+            l_conn_write.rollback()
+            self.m_logger.warning('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query))
+            raise
+        finally:
+            # release DB objects once finished
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        # insert the new ID in TB_PAGES and TB_OBJ -- treated like new page
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.migrate_id_page() migration 2')
+        l_cursor_write = l_conn_write.cursor()
+
+        try:
+            l_cursor_write.execute("""
+                insert into "TB_OBJ"(
+                    "ID"
+                    , "DT_CRE"
+                    , "TX_NAME"
+                    , "DT_MOD"
+                    , "ST_TYPE"
+                    , "ST_FB_TYPE"
+                    , "ST_FB_STATUS_TYPE") 
+                values( %s, %s, %s, %s, 'Page', 'Page', 'Page');
+            """, (
+                p_new_id,
+                datetime.datetime.now(),
+                p_name,
+                datetime.datetime.now()
+            ))
+
+            l_conn_write.commit()
+        except Exception as e:
+            l_conn_write.rollback()
+            self.m_logger.warning('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query))
+            raise
+        finally:
+            # release DB objects once finished
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.migrate_id_page() migration 3')
+        l_cursor = l_conn.cursor()
+
+        l_internal_id = None
+        try:
+            l_cursor.execute("""
+                select "ID_INTERNAL" 
+                from "TB_OBJ"
+                where "ID" = %s;
+            """, (p_new_id,))
+
+            for l_internal_id, in l_cursor:
+                pass
+        except Exception as e:
+            self.m_logger.warning('Error selecting from TB_OBJ: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise
+        finally:
+            # release DB objects once finished
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        if l_internal_id is None:
+            l_msg = 'Cannot find internal ID of new page just inserted into TB_OBJ - ID: ' + p_new_id
+            self.m_logger.critical(l_msg)
+            raise BulkDownloaderException(l_msg)
+
+        l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.migrate_id_page() migration 4')
+        l_cursor_write = l_conn_write.cursor()
+
+        try:
+            l_cursor_write.execute("""
+                insert into "TB_PAGES"(
+                    "ID"
+                    , "ID_OBJ_INTERNAL"
+                    , "DT_CRE"
+                    , "TX_NAME"
+                    , "ST_TYPE"
+                    , "ST_FB_TYPE"
+                    , "F_DNL"
+                    , "F_NON_EXIST") 
+                values( %s, %s, %s, %s, 'Page', 'Page', 'Y', false);
+            """, (
+                p_new_id,
+                l_internal_id,
+                datetime.datetime.now(),
+                p_name
+            ))
+
+            l_conn_write.commit()
+        except Exception as e:
+            l_conn_write.rollback()
+            self.m_logger.warning('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query))
+            raise
+        finally:
+            # release DB objects once finished
+            l_cursor_write.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn_write)
+
+        self.m_logger.info('migrate_id_page() End')
+
     def set_non_exist(self, p_id, p_page=False):
         """
 
@@ -3199,7 +3397,7 @@ class BulkDownloader:
         else:
             return s[:int(p_max_len) - len(l_cut_padding) - 1] + l_cut_padding
 
-    def store_user(self, p_id, p_name, p_date, p_padding):
+    def store_user(self, p_id, p_name, p_date, p_padding, p_type='User'):
         """
         DB Storage of a new user. If user already in the BD, traps the integrity violation error and returns `False`.
         
@@ -3207,6 +3405,7 @@ class BulkDownloader:
         :param p_name: User Name
         :param p_date: Date of the object in which user first appeared.
         :param p_padding: Debug/Info massage left padding.
+        :param p_type: `page` or `user`
         :return: `True` if insertion occurred.
         """
         self.m_logger.debug('Start store_user()')
@@ -3225,13 +3424,14 @@ class BulkDownloader:
         l_inserted = False
         try:
             l_cursor.execute("""
-                INSERT INTO "TB_USER"("ID", "ST_NAME", "DT_CRE", "DT_MSG")
-                VALUES( %s, %s, %s, %s )
+                INSERT INTO "TB_USER"("ID", "ST_NAME", "DT_CRE", "DT_MSG", "ST_TYPE")
+                VALUES( %s, %s, %s, %s, %s )
             """, (
                 p_id,
                 BulkDownloader.cut_max(p_name, 250),
                 datetime.datetime.now(),
-                l_date
+                l_date,
+                p_type
             ))
             l_conn.commit()
             l_inserted = True
