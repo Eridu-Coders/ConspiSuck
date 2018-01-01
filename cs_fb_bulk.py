@@ -92,6 +92,9 @@ class BulkDownloader:
         #: Image fetching Thread
         self.m_image_fetch_thread = None
 
+        #: Shares fetching Thread
+        self.m_shares_fetch_thread = None
+
         #: Process watchdog thread
         self.m_process_watchdog_thread = None
 
@@ -265,6 +268,13 @@ class BulkDownloader:
         self.m_image_fetch_thread.name = 'I'
         self.m_image_fetch_thread.start()
         self.m_logger.info('Image fetch thread launched')
+
+        # Image fetching thread
+        self.m_shares_fetch_thread = Thread(target=self.repeat_fetch_shares)
+        # One-letter name for the Image fetching thread
+        self.m_shares_fetch_thread.name = 'S'
+        self.m_shares_fetch_thread.start()
+        self.m_logger.info('Shares fetch thread launched')
 
         # Process watchdog thread
         self.m_process_watchdog_thread = Thread(target=self.process_watchdog)
@@ -735,7 +745,7 @@ class BulkDownloader:
                     '   =====[ {0}/{1} ]================POST========================='.format(
                         l_post_count, self.m_page))
 
-                l_finished = self.process_one_post(p_id, l_post)
+                l_finished = self.process_one_post(p_id, p_id, l_post, p_shared_post=False)
 
                 # break the inner for loop
                 if l_finished:
@@ -763,11 +773,13 @@ class BulkDownloader:
 
         self.m_logger.info('End getPostsFromPage()')
 
-    def process_one_post(self, p_id_page, p_post_json):
+    def process_one_post(self, p_id_page, p_id_parent, p_post_json, p_shared_post=False):
         """
 
         :param p_id_page:
+        :param p_id_parent:
         :param p_post_json:
+        :param p_shared_post:
         :return:
         """
         l_finished = False
@@ -778,6 +790,7 @@ class BulkDownloader:
         l_type = p_post_json['type']
         l_shares = int(p_post_json['shares']['count']) if 'shares' in p_post_json.keys() else 0
 
+        self.m_logger.info('   shared ?    : ' + 'yes' if p_shared_post else 'no')
         self.m_logger.info('   id          : ' + l_post_id)
         self.m_logger.info('   date        : ' + l_post_date)
 
@@ -790,7 +803,8 @@ class BulkDownloader:
         # if message older than gcm_days_depth days ---> break loop
         l_days_old = (datetime.datetime.now() - l_msg_date).days
         self.m_logger.info('   Days old    : {0}'.format(l_days_old))
-        if l_days_old > EcAppParam.gcm_days_depth:
+        if l_days_old > EcAppParam.gcm_days_depth and not p_shared_post:
+            # the 'too old' criterion only applies for posts downloaded directly from pages
             self.m_logger.info(
                 '   ---> Too old, stop getting posts from page [{0}]'.format(self.m_page))
             l_finished = True  # break the outer paging loop
@@ -866,33 +880,35 @@ class BulkDownloader:
 
             # store post information
             if self.store_object(
-                    p_padding='   ',
-                    p_type='Post',
-                    p_date_creation=l_post_date,
-                    p_date_modification=l_updated_time,
-                    p_id=l_post_id,
-                    p_parent_id=p_id_page,
-                    p_page_id=p_id_page,
-                    p_post_id='',
-                    p_fb_type=l_type,
-                    p_fb_status_type=l_status_type,
-                    p_share_count=l_shares,
-                    p_like_count=0,
-                    p_permalink_url=l_permalink_url,
-                    p_name=l_name,
-                    p_caption=l_caption,
-                    p_desc=l_description,
-                    p_story=l_story,
-                    p_message=l_message,
-                    p_fb_parent_id=l_parent_id,
-                    p_fb_object_id=l_object_id,
-                    p_link=l_link,
-                    p_place=l_place,
-                    p_source=l_source,
-                    p_user_id=l_user_id,
-                    p_tags=l_tags,
-                    p_with_tags=l_with_tags,
-                    p_properties=l_properties):
+                p_padding='   ',
+                p_type='Post',
+                p_date_creation=l_post_date,
+                p_date_modification=l_updated_time,
+                p_id=l_post_id,
+                p_parent_id=p_id_parent,
+                p_page_id=p_id_page,
+                p_post_id='',
+                p_fb_type=l_type,
+                p_fb_status_type=l_status_type,
+                p_share_count=l_shares,
+                p_like_count=0,
+                p_permalink_url=l_permalink_url,
+                p_name=l_name,
+                p_caption=l_caption,
+                p_desc=l_description,
+                p_story=l_story,
+                p_message=l_message,
+                p_fb_parent_id=l_parent_id,
+                p_fb_object_id=l_object_id,
+                p_link=l_link,
+                p_place=l_place,
+                p_source=l_source,
+                p_user_id=l_user_id,
+                p_tags=l_tags,
+                p_with_tags=l_with_tags,
+                p_properties=l_properties,
+                p_shared=p_shared_post
+            ):
 
                 # get attachments and comments only if the storage of the post was successful, i.e. if
                 # the post was a new one
@@ -902,12 +918,16 @@ class BulkDownloader:
 
                 self.get_comments(l_post_id, l_post_id, p_id_page, 0)
 
-                if len(l_parent_id) > 0:
+                # no need to get parent post if we already know it is shared
+                if len(l_parent_id) > 0 and not p_shared_post:
                     self.get_parent_post(l_post_id, l_parent_id)
             else:
                 # if already in DB ---> break loop because it means new posts are now exhausted
                 self.m_logger.info(
-                    '   ---> Post already in DB, stop getting posts from page [{0}]'.format(self.m_page))
+                    '   ---> Post already in DB {0}'.format(
+                        ', stop getting posts from page [{0}]'.format(self.m_page) if not p_shared_post
+                        else ', probably a cross-share'
+                    ))
                 l_finished = True  # also break outer paging loop
 
         return l_finished
@@ -1318,8 +1338,166 @@ class BulkDownloader:
                 break
         # end of loop: while True:
 
-        self.m_logger.info('[End scan_attachments()] {0}comment download count --> {1}'.format(
+        self.m_logger.info('{0}[End get_comments()] comment download count --> {1}'.format(
             l_depth_padding[:-3], l_comm_count))
+
+    def repeat_fetch_shares(self):
+        """
+
+        :return:
+        """
+        self.m_logger.info('Start repeat_fetch_shares()')
+
+        while True:
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.repeat_fetch_shares()')
+            l_cursor = l_conn.cursor()
+
+            # counting posts to be updated
+            l_count = 0
+            try:
+                l_cursor.execute("""
+                    select count(1) as "COUNT"
+                    from "TB_OBJ"
+                    where
+                        "ST_TYPE" = 'Post'
+                        and DATE_PART('day', now()::date - "DT_CRE") >= %s
+                        and not "F_SHARES_DOWNLOADED"
+                        and "N_SHARES" > 0
+                        and not "F_NON_EXIST";
+                """, (EcAppParam.gcm_shares_depth,))
+
+                for l_count, in l_cursor:
+                    pass
+
+                self.m_logger.info('PRGMTR-S Posts to be share downloaded: {0}'.format(l_count))
+            except Exception as e:
+                self.m_logger.critical('repeat_fetch_shares() Unknown Exception: {0}/{1}'.format(
+                    repr(e), l_cursor.query))
+                raise BulkDownloaderException('repeat_fetch_shares() Unknown Exception: {0}'.format(repr(e)))
+            finally:
+                # close DB access handles when finished
+                l_cursor.close()
+                EcConnectionPool.get_global_pool().putconn(l_conn)
+
+            if l_count > 0 and LocalParam.gcm_do_shares:
+                try:
+                    self.shares_download()
+                except Exception as e:
+                    self.m_logger.warning('Caught exception in repeat_fetch_shares() loop: ' + repr(e))
+                time.sleep(1)
+            else:
+                # no posts to update --> wait 5 minutes
+                time.sleep(5 * 60)
+
+    def shares_download(self):
+        """
+
+        :return:
+        """
+        self.m_logger.info('Start shares_download()')
+
+        # get DB connection and cursor
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.shares_download()')
+        l_cursor = l_conn.cursor()
+
+        l_post_list = []
+        try:
+            l_cursor.execute("""
+                select "ID", "ID_PAGE", "N_SHARES"
+                from "TB_OBJ"
+                   where
+                        "ST_TYPE" = 'Post'
+                        and DATE_PART('day', now()::date - "DT_CRE") >= %s
+                        and "N_SHARES" > 0
+                        and not "F_SHARES_DOWNLOADED"
+                        and not "F_NON_EXIST"
+                limit 100;
+            """, (EcAppParam.gcm_shares_depth,))
+
+            # loop through the posts obtained from the DB
+            for l_record in l_cursor:
+                l_post_list.append(l_record)
+
+            self.m_logger.info('Number of posts to process: {0}'.format(len(l_post_list)))
+        except Exception as e:
+            self.m_logger.critical('Shares download Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('Shares download Unknown Exception: {0}'.format(repr(e)))
+        finally:
+            # close DB access handles when finished
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        for l_post_id, l_page_id, l_share_count in l_post_list:
+            # thread abort
+            if not self.m_threads_proceed:
+                break
+
+            self.m_logger.info('===== Downloading {0} shares from post ID: {1}'.format(l_share_count, l_post_id))
+
+            # get post data
+            l_field_list = \
+                'id,application,caption,created_time,description,from,icon,link,message,message_tags,name,' + \
+                'object_id,parent_id,permalink_url,picture,full_picture,place,properties,shares,' + \
+                'source,status_type,story,to,type,updated_time,with_tags'
+
+            # FB API request to get the data for this post
+            l_request = 'https://graph.facebook.com/{0}/{1}/sharedposts?limit={2}&fields={3}'.format(
+                EcAppParam.gcm_api_version,
+                l_post_id,
+                EcAppParam.gcm_limit,
+                l_field_list)
+
+            # perform request
+            try:
+                l_response = self.perform_request(l_request)
+            except BulkDownloaderException as e:
+                if str(e) == 'NON_EXIST':
+                    self.m_logger.warning('Post with ID {0} said by FB not to exist (shares)'.format(l_post_id))
+                    self.set_non_exist(l_post_id)
+                    continue
+                else:
+                    raise
+            # decode request's JSON response
+            l_response_data = json.loads(l_response)
+            self.m_logger.info('Count of posts received: {0}'.format(len(l_response_data['data'])))
+
+            l_post_count = 0
+            l_finished = False
+            # loop through all returned posts
+            while not l_finished:
+                # 2 nested loops because of FB-specific paging mechanism (see below)
+                for l_post in l_response_data['data']:
+                    # increment the total number of posts retrieved
+                    self.m_postRetrieved += 1
+
+                    self.m_logger.info(
+                        '   =====[ {0}/{1} ]================POST (SHARED)========================='.format(
+                            l_post_count, l_share_count))
+
+                    l_already = self.process_one_post(l_page_id, l_post_id, l_post, p_shared_post=True)
+                    l_post_count += 1
+
+                    # post already in the DB
+                    if l_already:
+                        self.m_logger.info('Cross share with another page ?')
+
+                # End of loop: for l_post in l_responseData['data']: (looping through current batch of posts)
+
+                # FB API paging mechanism
+                if 'paging' in l_response_data.keys() and 'next' in l_response_data['paging'].keys():
+                    self.m_logger.info('   *** Getting next post block ...')
+                    l_request = l_response_data['paging']['next']
+                    l_response = self.perform_request(l_request)
+
+                    l_response_data = json.loads(l_response)
+                else:
+                    # if no more 'pages' (batches of posts) to load, break the loop
+                    break
+
+            # end while not l_finished: (outer loop to handle paging)
+            self.set_shares_downloaded(l_post_id)
+
+        self.m_logger.info('End shares_download()')
 
     def repeat_posts_update(self):
         """
@@ -2740,7 +2918,7 @@ class BulkDownloader:
         l_request = p_request + '&access_token={0}'.format(l_token)
         l_request = re.sub(r'/&', '/?', l_request)  # in case there were no parameters at the end of the request
 
-        self.m_logger.debug('l_request : ' + l_request)
+        self.m_logger.info('l_request : ' + l_request[:100])
 
         # this used to be the token replacement code when short-duration tokens were used
 
@@ -2770,7 +2948,7 @@ class BulkDownloader:
         l_finished = False
         while not l_finished:
             try:
-                # test code
+                # test code - for FB page ID migration error handling
                 if not LocalParam.gcm_prodEnv and re.search('100000010000001', l_request):
                     raise urllib.error.HTTPError(
                         'xx', 400, 'toto',
@@ -2798,6 +2976,7 @@ class BulkDownloader:
                 l_response = urllib.request.urlopen(l_request, timeout=20).read().decode('utf-8').strip()
                 # self.m_logger.info('l_response: {0}'.format(l_response))
 
+                self.m_logger.info('perform_request() success : ' + l_response[:50])
                 # if we reached this point, it means that no errors were encountered --> exit
                 l_finished = True
 
@@ -2936,7 +3115,7 @@ class BulkDownloader:
                 time.sleep(1)
                 l_err_count += 1
 
-        self.m_logger.debug('End perform_request() Count: {0:,.0f}'.format(self.m_FBRequestCount))
+        self.m_logger.info('End perform_request() Count: {0:,.0f}'.format(self.m_FBRequestCount))
         return l_response
 
     def get_wait(self, p_error_count):
@@ -2992,7 +3171,8 @@ class BulkDownloader:
                      p_user_id='',
                      p_tags='',
                      p_with_tags='',
-                     p_properties=''):
+                     p_properties='',
+                     p_shared=False):
 
         """
         DB storage of a new object (page, post or comment).
@@ -3023,7 +3203,8 @@ class BulkDownloader:
         :param p_user_id:
         :param p_tags: 
         :param p_with_tags: 
-        :param p_properties: 
+        :param p_properties:
+        :param p_shared:
         :return: `True` if insertion occurred
         """
         self.m_logger.debug('Start store_object()')
@@ -3084,7 +3265,8 @@ class BulkDownloader:
                     ,"ST_FB_PARENT_ID"
                     ,"ST_FB_OBJECT_ID"
                     ,"TX_LINK"
-                    ,"TX_SOURCE")
+                    ,"TX_SOURCE"
+                    ,"P_IS_SHARED_POST")
                 VALUES(
                     %s, %s, %s, %s, 
                     %s, %s, %s, %s, 
@@ -3092,7 +3274,7 @@ class BulkDownloader:
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s) 
+                    %s, %s, %s) 
             """, (
                 p_id,
                 p_parent_id,
@@ -3119,7 +3301,8 @@ class BulkDownloader:
                 p_fb_parent_id,
                 p_fb_object_id,
                 p_link,
-                p_source
+                p_source,
+                p_shared
                 )
             )
 
@@ -3271,6 +3454,41 @@ class BulkDownloader:
 
         self.m_logger.info('migrate_id_page() End')
 
+    def set_shares_downloaded(self, p_id):
+        """
+
+        :param p_id:
+        :return:
+        """
+        self.m_logger.info('Start set_shares_downloaded()')
+        l_stored = False
+
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.set_shares_downloaded()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                UPDATE "TB_OBJ"
+                SET
+                    "F_SHARES_DOWNLOADED" = true
+                WHERE "ID" = %s
+            """, (p_id, ))
+            l_conn.commit()
+            l_stored = True
+        except psycopg2.IntegrityError as e:
+            self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+            l_conn.rollback()
+        except Exception as e:
+            l_conn.rollback()
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
+        finally:
+            l_cursor.close()
+            EcConnectionPool.get_global_pool().putconn(l_conn)
+
+        self.m_logger.info('End set_shares_downloaded()')
+        return l_stored
+
     def set_non_exist(self, p_id, p_page=False):
         """
 
@@ -3281,7 +3499,7 @@ class BulkDownloader:
         self.m_logger.debug('Start set_non_exist()')
         l_stored = False
 
-        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_object()')
+        l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.set_non_exist() TB_OBJ')
         l_cursor = l_conn.cursor()
 
         try:
@@ -3308,7 +3526,7 @@ class BulkDownloader:
         if p_page:
             l_stored_page = False
 
-            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.update_object()')
+            l_conn = EcConnectionPool.get_global_pool().getconn('BulkDownloader.set_non_exist() TB_PAGES')
             l_cursor = l_conn.cursor()
 
             try:
