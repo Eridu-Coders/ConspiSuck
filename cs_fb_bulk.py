@@ -115,15 +115,15 @@ class BulkDownloader:
 
         # Spell Checker should not complain ... Grrrr
         self.m_long_token = [
-            ('EAAVaTJxF5KoBAOrpauROw3AXwh8b7mG3P5NZBKfw8lFg0WIZABaI2ZBB4dh4IYt30uKA9sqgSxpFs4RuMGvxo' +
-             'SXSnKGyJkEd5Tpec0uekJpjQYuRXtJa7x3MkmhfHHA5t9kWwOuQLyfZC4pNcRTYWdcGzQM5E7N2TTeO9PKAFwZDZD',
-                datetime.datetime.strptime('20/02/2018', '%d/%m/%Y')) ,
-            ('EAAVaTJxF5KoBALqGzY8z8q645BRmTqCobXcmoZBY1lTLNDRA9L3XAfqpbytb8QDjCsDFnCh0v39wg4F0kvOKao' +
-             'bWwZAVLzfIE3tm7RZCkLaTRBRnTjldcd7UvUXlyOdB8Opgsl90LSkMnFdOz6IDQnLPGGqQ5wBZB5Kz9YZCp6gZDZD',
-                datetime.datetime.strptime('25/01/2018', '%d/%m/%Y')),
-            ('EAAVaTJxF5KoBAJDZBC6W1QyWTktXgwTpM6ZC2UTBoq89KZA2LgAeA8ly9sPBZCSO2k7uFVLKO7acaq0SmGhOFT' +
-             'LGetWpTqieLgEli3lJLboyn2GSKiAiDjp5Gql0Ml2w75G6wmZCcZCgOOXJvqsOUSMLRuv0YIZAdIZD',
-             datetime.datetime.strptime('25/01/2018', '%d/%m/%Y'))
+            ('EAAVaTJxF5KoBAIzoFZB3ONtwWSBoePun29cKECBZCwaCW60BNLesTTGZBAGtsCs0mAsHF3VF8KGtLo9ker8evLfseZCpuvf' +
+             '92oknLmtBbDZAZA0C9e76ytTCUtng85sZCP5JhJwtZBaPxUC7owFq16YIuEaQvatAYGxIsKoZC6K1q7AZDZD',
+                datetime.datetime.strptime('29/03/2018', '%d/%m/%Y')) ,
+            ('EAAVaTJxF5KoBAMrIn22zKWUQThJIjeZBhpH2dpERciOpl4ghZAdbumZCOLel2avgdFh07X4ormLFG2c1uXY486gcqZB5nt' +
+             'IYZAKqwha6EezFT0SJV1btC5BNhu1zuryqZAXek2KDNa1oU0qiE4ZCbuprhtDYn7eUYcZD',
+                datetime.datetime.strptime('29/03/2018', '%d/%m/%Y')),
+            ('EAAVaTJxF5KoBADuTGKnEogArzZAkC0FzohiQD6OsHyWDuPON2B6xm9yflAEcwYd4YdeL6Su93tXfG5KH7WK9FamIXhgp' +
+             'Ks1G2yT39BKs1HnqdPX2GxaMVqZBZBu3sSj1VKxSDbjQvRIq0NgBRu9sv1CisuTZA3C9uEVJ9ujLigZDZD',
+             datetime.datetime.strptime('29/03/2018', '%d/%m/%Y'))
         ]
 
         #: reboot required flag
