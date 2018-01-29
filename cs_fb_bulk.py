@@ -729,8 +729,16 @@ class BulkDownloader:
         # decode the JSON request response
         l_response_data = json.loads(l_response)
 
+        if 'data' not in l_response_data.keys():
+            l_msg = 'malformed FB response: no "data" array in [{0}]'.format(l_response)
+            self.m_logger.error(l_msg)
+            raise BulkDownloaderException(l_msg)
+
         if len(l_response_data['data']) > 0:
-            self.m_logger.info('   Latest date:' + l_response_data['data'][0]['created_time'])
+            l_latest_date, _ = BulkDownloader.get_optional_field(l_response_data['data'][0], 'created_time')
+            if len(l_latest_date) == 0:
+                self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data['data'][0])))
+            self.m_logger.info('   Latest date: ' + l_latest_date)
 
         l_post_count = 0
         l_finished = False
@@ -786,9 +794,12 @@ class BulkDownloader:
 
         # basic post data items
         l_post_id = p_post_json['id']
-        l_post_date = p_post_json['created_time']
+        l_post_date, _ = BulkDownloader.get_optional_field(p_post_json, 'created_time')
         l_type = p_post_json['type']
         l_shares = int(p_post_json['shares']['count']) if 'shares' in p_post_json.keys() else 0
+
+        if len(l_post_date) == 0:
+            self.m_logger.warning('No "created_time" in [{0}]'.format(repr(p_post_json)))
 
         self.m_logger.info('   shared ?    : ' + 'yes' if p_shared_post else 'no')
         self.m_logger.info('   id          : ' + l_post_id)
@@ -968,8 +979,11 @@ class BulkDownloader:
 
         # basic post data items
         l_post_id = l_response_data['id']
-        l_post_date = l_response_data['created_time']
+        l_post_date, _ = BulkDownloader.get_optional_field(l_response_data, 'created_time')
         l_type = l_response_data['type']
+
+        if len(l_post_date) == 0:
+            self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data)))
 
         # get additional data from the post
         l_name, l_name_short = BulkDownloader.get_optional_field(l_response_data, 'name')
@@ -1247,8 +1261,16 @@ class BulkDownloader:
         # decode JSON request response
         l_response_data = json.loads(l_response)
 
+        if 'data' not in l_response_data.keys():
+            l_msg = 'malformed FB response: no "data" array in [{0}]'.format(l_response)
+            self.m_logger.error(l_msg)
+            raise BulkDownloaderException(l_msg)
+
         if len(l_response_data['data']) > 0:
-            self.m_logger.info('{0}Latest date: '.format(l_depth_padding) + l_response_data['data'][0]['created_time'])
+            l_latest_date, _ = BulkDownloader.get_optional_field(l_response_data['data'][0], 'created_time')
+            if len(l_latest_date) == 0:
+                self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data['data'][0])))
+            self.m_logger.info('{0}Latest date: '.format(l_depth_padding) + l_latest_date)
 
         l_comm_count = 0
         while True:
@@ -1258,9 +1280,12 @@ class BulkDownloader:
 
                 # basic comment data
                 l_comment_id = l_comment['id']
-                l_comment_date = l_comment['created_time']
+                l_comment_date, _ = BulkDownloader.get_optional_field(l_comment, 'created_time')
                 l_comment_likes = int(l_comment['like_count'])
                 l_comment_c_count = int(l_comment['comment_count'])
+
+                if len(l_comment_date) == 0:
+                    self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_comment)))
 
                 # debug display
                 if EcAppParam.gcm_verboseModeOn:
