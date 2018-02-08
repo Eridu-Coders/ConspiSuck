@@ -8,6 +8,8 @@ import psutil
 
 __author__ = 'Pavan Mahalingam'
 
+# extra={'m_errno': 3002}
+
 
 class EcAppCore(threading.Thread):
     """
@@ -67,17 +69,17 @@ class EcAppCore(threading.Thread):
             ))
             l_conn.commit()
         except psycopg2.IntegrityError as e:
-            self.m_logger.warning('TB_EC_MSG insert failure - Integrity error: {0}-{1}'.format(
+            self.m_logger.critical('TB_EC_MSG insert failure - Integrity error: {0}-{1}'.format(
                 type(e).__name__,
                 repr(e)) +
-                '/[{0}] {1}'.format(e.pgcode, e.pgerror)
+                '/[{0}] {1}'.format(e.pgcode, e.pgerror), extra={'m_errno': 3001}
             )
             raise
         except Exception as e:
-            self.m_logger.warning('TB_EC_MSG insert failure: {0}-{1}'.format(
+            self.m_logger.critical('TB_EC_MSG insert failure: {0}-{1}'.format(
                 type(e).__name__,
                 repr(e)
-            ))
+            ), extra={'m_errno': 3002})
             raise
 
         l_cursor.close()

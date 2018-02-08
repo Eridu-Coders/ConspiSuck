@@ -14,6 +14,7 @@ __author__ = 'Pavan Mahalingam'
 
 # TODO: Warning message when approaching token end of life
 
+# extra={'m_errno': 2006}
 
 class CsBackgroundTask(threading.Thread):
     """
@@ -130,9 +131,9 @@ class CsBackgroundTask(threading.Thread):
             self.m_logger.warning('Internet connection off')
 
             if l_attempt_counter >= l_max_attempts:
-                self.m_logger.critical('Tried to connect for {0:0.2f} hours. Giving up.'.format(
-                    (l_attempt_counter * l_sleep_time) / 3600
-                ))
+                self.m_logger.critical(
+                    'Tried to connect for {0:0.2f} hours. Giving up.'.format((l_attempt_counter * l_sleep_time) / 3600),
+                    extra={'m_errno': 2001})
                 sys.exit(0)
             else:
                 l_attempt_counter += 1
@@ -146,7 +147,7 @@ class CsBackgroundTask(threading.Thread):
         try:
             self.m_bulk.bulk_download()
         except Exception as e:
-            self.m_logger.warning('Serious exception - Raising: ' + repr(e))
+            self.m_logger.critical('Serious exception - Raising: ' + repr(e), extra={'m_errno': 2002})
             raise
 
     def reboot_trigger(self):
@@ -405,7 +406,7 @@ class CsApp:
 
                 l_row_num += 1
         except Exception as e:
-            self.m_logger.warning('Page stats query failure: {0}'.format(repr(e)))
+            self.m_logger.critical('Page stats query failure: {0}'.format(repr(e)), extra={'m_errno': 2003})
             raise
 
         l_cursor.close()
@@ -617,7 +618,7 @@ class CsApp:
                     l_display_text
                 )
         except Exception as e:
-            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
+            self.m_logger.critical('TB_OBJ query failure: {0}'.format(repr(e)), extra={'m_errno': 2004})
             raise
 
         l_cursor.close()
@@ -832,7 +833,7 @@ class CsApp:
                         """, (l_post_id,)
                     )
                 except Exception as e:
-                    self.m_logger.warning('TB_MEDIA query failure: {0}'.format(repr(e)))
+                    self.m_logger.critical('TB_MEDIA query failure: {0}'.format(repr(e)), extra={'m_errno': 2004})
                     raise
 
                 l_img_string = ''
@@ -1245,7 +1246,7 @@ class CsApp:
                     l_time_sub += time.perf_counter() - s0
 
         except Exception as e:
-            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
+            self.m_logger.critical('TB_OBJ query failure: {0}'.format(repr(e)), extra={'m_errno': 2005})
             raise
 
         l_cursor.close()
@@ -1408,7 +1409,7 @@ class CsApp:
                 """, (l_user_id, l_user_id)
             )
         except Exception as e:
-            self.m_logger.warning('TB_OBJ query failure: {0}'.format(repr(e)))
+            self.m_logger.critical('TB_OBJ query failure: {0}'.format(repr(e)), extra={'m_errno': 2006})
             raise
 
         l_user_name = ''

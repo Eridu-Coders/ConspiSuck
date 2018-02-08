@@ -179,9 +179,14 @@ class EcLogger(logging.Logger):
             l_thread_name = threading.current_thread().name
             l_process_name = multiprocessing.current_process().name
 
+            try:
+                l_errno = p_record.m_errno
+            except AttributeError:
+                l_errno = 0
+
             l_finished = False
             while not l_finished:
-                l_conn1 = EcConnectionPool.get_global_pool().getconn('EcCsvFormatter.format()')
+                l_conn1 = EcConnectionPool.get_global_pool().getconn('EcLogger.format() db_output()')
                 l_cursor1 = l_conn1.cursor()
                 try:
                     l_cursor1.execute("""
@@ -189,6 +194,7 @@ class EcLogger(logging.Logger):
                                 {1}
                                 {2}
                                 {3}
+                                {4}
                                 "ST_NAME",
                                 "ST_LEVEL",
                                 "ST_MODULE",
@@ -199,14 +205,16 @@ class EcLogger(logging.Logger):
                                 "ST_THREAD",
                                 "ST_PROCESS"
                             )
-                            values({4}{5}%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                            values({5}{6}{7}%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
                         """.format(
                             p_table,
                             '"ST_TYPE", ' if p_table == 'TB_EC_MSG' else '',
                             '"ST_ENV", ' if p_table == 'TB_EC_MSG' else '',
+                            '"N_ERRNO", ' if p_table == 'TB_EC_MSG' else '',
                             '"DT_MSG", ' if p_table == 'TB_EC_MSG' else '"DT_CRE", ',
                             "'LOG', " if p_table == 'TB_EC_MSG' else '',
-                            "'{0}', ".format(l_env_code) if p_table == 'TB_EC_MSG' else ''
+                            "'{0}', ".format(l_env_code) if p_table == 'TB_EC_MSG' else '',
+                            "{0}, ".format(l_errno) if p_table == 'TB_EC_MSG' else ''
                     ), (
                         datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone)),
                         p_record.name,
@@ -906,13 +914,11 @@ if __name__ == "__main__":
     print('| v. 1.0 - 20/02/2017                                        |')
     print('+------------------------------------------------------------+')
 
-    EcMailer.init_mailer()
-    EcMailer.send_mail('Test Subject 2', 'Test Body from Smtp2Go')
+    GlobalStart.basic_env_start()
 
-    EcLogger.log_init()
     l_logger = logging.getLogger('Test')
     l_logger.debug('Debug message test')
     l_logger.info('Info message test')
-    l_logger.warning('Warning message test')
-    l_logger.error('Error message test')
-    l_logger.critical('Critical message test')
+    l_logger.warning('Warning message test', extra={'m_errno': 1001})
+    l_logger.error('Error message test', extra={'m_errno': 1002})
+    l_logger.critical('Critical message test', extra={'m_errno': 1003})

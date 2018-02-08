@@ -133,7 +133,8 @@ class StartApp:
 
         # final success message (sends an e-mail message because it is a warning)
         EcLogger.cm_logger.warning('Server up and running at [{0}:{1}]'
-                                   .format(EcAppParam.gcm_appDomain, str(EcAppParam.gcm_httpPort)))
+                                   .format(EcAppParam.gcm_appDomain, str(EcAppParam.gcm_httpPort)),
+                                   extra={'m_errno': 9000})
 
         # start all threads (the app's own maintenance thread and the background tasks threads)
         l_app.start_threads()
@@ -142,7 +143,8 @@ class StartApp:
             # start server main loop
             l_httpd.serve_forever()
         except Exception as e:
-            EcLogger.cm_logger.critical('App crashed. Error: {0}-{1}'.format(type(e).__name__, repr(e)))
+            EcLogger.cm_logger.critical('App crashed. Error: {0}-{1}'.format(type(e).__name__, repr(e)),
+                                        extra={'m_errno': 9001})
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":

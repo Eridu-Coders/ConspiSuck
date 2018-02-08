@@ -14,6 +14,8 @@ from wrapvpn import *
 
 __author__ = 'Pavan Mahalingam'
 
+# extra={'m_errno': 1079}
+
 # ----------------------------------- Tesseract -----------------------------------------------------------
 # https://pypi.python.org/pypi/tesserocr
 # apt-get install tesseract-ocr libtesseract-dev libleptonica-dev
@@ -27,12 +29,14 @@ class BulkDownloaderException(Exception):
     def __init__(self, p_message):
         super(BulkDownloaderException, self).__init__(p_message)
 
+
 class PageIDMigration(Exception):
     def __init__(self, p_message, p_old_id, p_new_id):
         self.m_old_id = p_old_id
         self.m_new_id = p_new_id
 
         super(PageIDMigration, self).__init__(p_message)
+
 
 class BulkDownloader:
     """
@@ -331,7 +335,7 @@ class BulkDownloader:
                                 l_msg = 'bulk_download Unknown Exception (Housekeeping) : {0}/{1}'.format(
                                     repr(e),
                                     l_cursor_write.query)
-                                self.m_logger.critical(l_msg)
+                                self.m_logger.critical(l_msg, extra={'m_errno': 1001})
                                 raise BulkDownloaderException(l_msg)
                             finally:
                                 # release DB handles when finished
@@ -354,7 +358,7 @@ class BulkDownloader:
                 l_cursor_vacuum.execute('VACUUM FULL ANALYSE')
                 self.m_logger.info('Database Vacuum Success')
             except psycopg2.Error as e:
-                self.m_logger.warning('Vacuum request failure: ' + repr(e))
+                self.m_logger.error('Vacuum request failure: ' + repr(e), extra={'m_errno': 1002})
             finally:
                 l_cursor_vacuum.close()
                 l_connect.close()
@@ -367,7 +371,8 @@ class BulkDownloader:
                 try:
                     subprocess.call(l_bkp_cmd.split(' '))
                 except subprocess.CalledProcessError as e:
-                    self.m_logger.warning('System backup - Error return code: {0}'.format(e.returncode))
+                    self.m_logger.error('System backup - Error return code: {0}'.format(e.returncode),
+                                        extra={'m_errno': 1003})
                 self.m_logger.info('*** End system backup ***')
 
         # clear the locking flags -------------------------------------------------------------------------------------
@@ -388,7 +393,7 @@ class BulkDownloader:
         except Exception as e:
             l_conn_write.rollback()
             l_msg = 'bulk_download Unknown Exception (TB_OBJ) : {0}/{1}'.format(repr(e), l_cursor_write.query)
-            self.m_logger.critical(l_msg)
+            self.m_logger.critical(l_msg, extra={'m_errno': 1004})
             raise BulkDownloaderException(l_msg)
         finally:
             # release DB handles when finished
@@ -412,7 +417,7 @@ class BulkDownloader:
         except Exception as e:
             l_conn_write.rollback()
             l_msg = 'bulk_download Unknown Exception (TB_MEDIA) : {0}/{1}'.format(repr(e), l_cursor_write.query)
-            self.m_logger.critical(l_msg)
+            self.m_logger.critical(l_msg, extra={'m_errno': 1005})
             raise BulkDownloaderException(l_msg)
         finally:
             # release DB handles when finished
@@ -465,7 +470,8 @@ class BulkDownloader:
                 try:
                     self.get_posts()
                 except BulkDownloaderException as e:
-                    self.m_logger.warning('bulk_download main loop exception capture: ' + repr(e))
+                    self.m_logger.error('bulk_download main loop exception capture: ' + repr(e),
+                                        extra={'m_errno': 1006})
 
             # reboot ?
             self.m_logger.info('*** RBTEST Reboot Test ***')
@@ -481,11 +487,11 @@ class BulkDownloader:
                         # subprocess.run('shutdown --reboot now'.split(' '), shell=True, check=True)
                         subprocess.run('/sbin/reboot'.split(' '), shell=True, check=True)
                     except subprocess.CalledProcessError as e:
-                        self.m_logger.warning(
+                        self.m_logger.error(
                             'Failed to reboot the system: ' +
                             'returncode: {0}|'.format(e.returncode) +
                             'stdout: {0}|'.format(e.stdout) +
-                            'stderr: {0}|'.format(e.stderr)
+                            'stderr: {0}|'.format(e.stderr), extra={'m_errno': 1007}
                         )
                 else:
                     self.m_logger.info('*** NRBOOT Already rebooted ***')
@@ -532,7 +538,7 @@ class BulkDownloader:
             l_response = self.perform_request(l_request)
         except BulkDownloaderException as e:
             if str(e) == 'NON_EXIST':
-                self.m_logger.critical('TestPage said not to exist !!')
+                self.m_logger.critical('TestPage said not to exist !!', extra={'m_errno': 1008})
                 sys.exit(0)
             else:
                 raise
@@ -546,7 +552,8 @@ class BulkDownloader:
             for l_post in l_response_data['data']:
                 # if there is a parent_id, it means that it is a share (or at least this is what we assume).
                 if 'parent_id' in l_post.keys():
-                    l_parent_id = l_post['parent_id']
+                    # l_parent_id = l_post['parent_id']
+                    l_parent_id = self.get_mandatory_field(l_post, 'parent_id', 'get_pages()')
                     self.m_logger.info('l_parent_id:' + l_parent_id)
 
                     # new request to get the parent post (the original post, not the share)
@@ -562,7 +569,9 @@ class BulkDownloader:
                         l_response_post = self.perform_request(l_request_post)
                     except BulkDownloaderException as e:
                         if str(e) == 'NON_EXIST':
-                            self.m_logger.warning('Page with ID {0} said by FB not to exist'.format(l_parent_id))
+                            self.m_logger.error(
+                                'Page with ID {0} said by FB not to exist'.format(l_parent_id),
+                                extra={'m_errno': 1009})
                             continue
                         else:
                             raise
@@ -573,8 +582,10 @@ class BulkDownloader:
                     # since this should be a page post, the 'from' field identifies the page it has been posted to.
                     if 'from' in l_response_post_data.keys():
                         l_from = l_response_post_data['from']
-                        l_page_id = l_from['id']
-                        l_page_name = l_from['name']
+                        # l_page_id = l_from['id']
+                        # l_page_name = l_from['name']
+                        l_page_id = self.get_mandatory_field(l_from, 'id', 'get_pages()')
+                        l_page_name = self.get_mandatory_field(l_from, 'name', 'get_pages()')
 
                         self.m_logger.info('Page id   :' + l_page_id)
                         self.m_logger.info('Page name :' + l_page_name)
@@ -662,7 +673,8 @@ class BulkDownloader:
             for l_record in l_cursor:
                 l_page_list.append(l_record)
         except Exception as e:
-            self.m_logger.warning('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.error('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query),
+                                extra={'m_errno': 1010})
             raise
         finally:
             # release DB objects once finished
@@ -721,7 +733,7 @@ class BulkDownloader:
             l_response = self.perform_request(l_request)
         except BulkDownloaderException as e:
             if str(e) == 'NON_EXIST':
-                self.m_logger.warning('Page with ID {0} said by FB not to exist'.format(p_id))
+                self.m_logger.error('Page with ID {0} said by FB not to exist'.format(p_id), extra={'m_errno': 1011})
                 self.set_non_exist(p_id, p_page=True)
                 return
             else:
@@ -735,9 +747,11 @@ class BulkDownloader:
             raise BulkDownloaderException(l_msg)
 
         if len(l_response_data['data']) > 0:
-            l_latest_date, _ = BulkDownloader.get_optional_field(l_response_data['data'][0], 'created_time')
-            if len(l_latest_date) == 0:
-                self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data['data'][0])))
+            # l_latest_date, _ = BulkDownloader.get_optional_field(l_response_data['data'][0], 'created_time')
+            l_latest_date = \
+                self.get_mandatory_field(l_response_data['data'][0], 'created_time', 'get_posts_from_page()')
+            # if len(l_latest_date) == 0:
+            #    self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data['data'][0])))
             self.m_logger.info('   Latest date: ' + l_latest_date)
 
         l_post_count = 0
@@ -793,13 +807,16 @@ class BulkDownloader:
         l_finished = False
 
         # basic post data items
-        l_post_id = p_post_json['id']
-        l_post_date, _ = BulkDownloader.get_optional_field(p_post_json, 'created_time')
-        l_type = p_post_json['type']
+        # l_post_id = p_post_json['id']
+        l_post_id = self.get_mandatory_field(p_post_json, 'id', 'process_one_post()')
+        # l_post_date, _ = BulkDownloader.get_optional_field(p_post_json, 'created_time')
+        l_post_date = self.get_mandatory_field(p_post_json, 'created_time', 'process_one_post()')
+        # l_type = p_post_json['type']
+        l_type = self.get_mandatory_field(p_post_json, 'type', 'process_one_post()')
         l_shares = int(p_post_json['shares']['count']) if 'shares' in p_post_json.keys() else 0
 
-        if len(l_post_date) == 0:
-            self.m_logger.warning('No "created_time" in [{0}]'.format(repr(p_post_json)))
+        # if len(l_post_date) == 0:
+        #     self.m_logger.warning('No "created_time" in [{0}]'.format(repr(p_post_json)))
 
         self.m_logger.info('   shared ?    : ' + 'yes' if p_shared_post else 'no')
         self.m_logger.info('   id          : ' + l_post_id)
@@ -970,7 +987,8 @@ class BulkDownloader:
             l_response = self.perform_request(l_request)
         except BulkDownloaderException as e:
             if str(e) == 'NON_EXIST':
-                self.m_logger.warning('Parent post with ID {0} said by FB not to exist'.format(p_fb_parent_id))
+                self.m_logger.warning('Parent post with ID {0} said by FB not to exist'.format(p_fb_parent_id),
+                                      extra={'m_errno': 1012})
                 return
             else:
                 raise
@@ -978,12 +996,15 @@ class BulkDownloader:
         l_response_data = json.loads(l_response)
 
         # basic post data items
-        l_post_id = l_response_data['id']
-        l_post_date, _ = BulkDownloader.get_optional_field(l_response_data, 'created_time')
-        l_type = l_response_data['type']
+        # l_post_id = l_response_data['id']
+        l_post_id = self.get_mandatory_field(l_response_data, 'id', 'get_parent_post()')
+        # l_post_date, _ = BulkDownloader.get_optional_field(l_response_data, 'created_time')
+        l_post_date = self.get_mandatory_field(l_response_data, 'created_time', 'get_parent_post()')
+        # l_type = l_response_data['type']
+        l_type = self.get_mandatory_field(l_response_data, 'type', 'get_parent_post()')
 
-        if len(l_post_date) == 0:
-            self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data)))
+        # if len(l_post_date) == 0:
+        #     self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data)))
 
         # get additional data from the post
         l_name, l_name_short = BulkDownloader.get_optional_field(l_response_data, 'name')
@@ -1019,7 +1040,8 @@ class BulkDownloader:
                 l_response_from = self.perform_request(l_request_from)
             except BulkDownloaderException as e:
                 if str(e) == 'NON_EXIST':
-                    self.m_logger.warning('User ID {0} said by FB not to exist'.format(l_user_id))
+                    self.m_logger.warning('User ID {0} said by FB not to exist'.format(l_user_id),
+                                          extra={'m_errno': 1013})
                     return
                 else:
                     raise
@@ -1027,7 +1049,8 @@ class BulkDownloader:
             l_response_data_from = json.loads(l_response_from)
 
             if 'metadata' in l_response_data_from.keys():
-                l_type = l_response_data_from['metadata']['type']
+                # l_type = l_response_data_from['metadata']['type']
+                l_type = self.get_mandatory_field(l_response_data_from['metadata'], 'type', 'get_parent_post() 2')
                 self.m_logger.info('      type     : {0} FRMTYP [{1}]'.format(l_type, l_user_name))
 
             # store user data
@@ -1098,7 +1121,9 @@ class BulkDownloader:
             l_response = self.perform_request(l_request)
         except BulkDownloaderException as e:
             if str(e) == 'NON_EXIST':
-                self.m_logger.warning('Post with ID {0} said by FB not to exist (attachments query)'.format(p_post_id))
+                self.m_logger.warning(
+                    'Post with ID {0} said by FB not to exist (attachments query)'.format(p_post_id),
+                    extra={'m_errno': 1014})
                 self.set_non_exist(p_post_id)
                 return
             else:
@@ -1170,12 +1195,17 @@ class BulkDownloader:
                 l_media = l_attachment['media']
                 if list(l_media.keys()) == ['image']:
                     try:
-                        l_src = l_media['image']['src']
-                        l_width = int(l_media['image']['width'])
-                        l_height = int(l_media['image']['height'])
+                        # l_src = l_media['image']['src']
+                        l_src = self.get_mandatory_field(l_media['image'], 'src', 'scan_attachments()')
+                        # l_width = int(l_media['image']['width'])
+                        l_width = int(self.get_mandatory_field(l_media['image'], 'width', 'scan_attachments()'))
+                        # l_height = int(l_media['image']['height'])
+                        l_height = int(self.get_mandatory_field(l_media['image'], 'height', 'scan_attachments()'))
                     except ValueError:
-                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(
-                            l_media['image']['width'], l_media['image']['height']))
+                        l_width_s = self.get_mandatory_field(l_media['image'], 'width', 'scan_attachments()')
+                        l_height_s =self.get_mandatory_field(l_media['image'], 'height', 'scan_attachments()')
+
+                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(l_width_s, l_height_s))
                     except KeyError:
                         self.m_logger.warning('Missing key in: {0}'.format(l_media['image']))
                 l_media = json.dumps(l_attachment['media'])
@@ -1253,7 +1283,8 @@ class BulkDownloader:
             l_response = self.perform_request(l_request)
         except BulkDownloaderException as e:
             if str(e) == 'NON_EXIST':
-                self.m_logger.warning('Post with ID {0} said by FB not to exist (comments query)'.format(p_id))
+                self.m_logger.warning('Post with ID {0} said by FB not to exist (comments query)'.format(p_id),
+                                      extra={'m_errno': 1015})
                 self.set_non_exist(p_id)
                 return
             else:
@@ -1267,9 +1298,10 @@ class BulkDownloader:
             raise BulkDownloaderException(l_msg)
 
         if len(l_response_data['data']) > 0:
-            l_latest_date, _ = BulkDownloader.get_optional_field(l_response_data['data'][0], 'created_time')
-            if len(l_latest_date) == 0:
-                self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data['data'][0])))
+            # l_latest_date, _ = BulkDownloader.get_optional_field(l_response_data['data'][0], 'created_time')
+            l_latest_date = self.get_mandatory_field(l_response_data['data'][0], 'created_time', 'get_comments()')
+            # if len(l_latest_date) == 0:
+            #     self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_response_data['data'][0])))
             self.m_logger.info('{0}Latest date: '.format(l_depth_padding) + l_latest_date)
 
         l_comm_count = 0
@@ -1279,13 +1311,25 @@ class BulkDownloader:
                 self.m_commentRetrieved += 1
 
                 # basic comment data
-                l_comment_id = l_comment['id']
-                l_comment_date, _ = BulkDownloader.get_optional_field(l_comment, 'created_time')
-                l_comment_likes = int(l_comment['like_count'])
-                l_comment_c_count = int(l_comment['comment_count'])
+                # l_comment_id = l_comment['id']
+                l_comment_id = self.get_mandatory_field(l_comment, 'id', 'get_comments()')
+                # l_comment_date, _ = BulkDownloader.get_optional_field(l_comment, 'created_time')
+                l_comment_date = self.get_mandatory_field(l_comment, 'created_time', 'get_comments()')
+                try:
+                    # l_comment_likes = int(l_comment['like_count'])
+                    l_comment_likes = int(self.get_mandatory_field(l_comment, 'like_count', 'get_comments()'))
+                    # l_comment_c_count = int(l_comment['comment_count'])
+                    l_comment_c_count = int(self.get_mandatory_field(l_comment, 'comment_count', 'get_comments()'))
+                except ValueError:
+                    l_comment_likes_s = self.get_mandatory_field(l_comment, 'like_count', 'get_comments()')
+                    l_comment_c_count_s = self.get_mandatory_field(l_comment, 'comment_count', 'get_comments()')
 
-                if len(l_comment_date) == 0:
-                    self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_comment)))
+                    self.m_logger.error(
+                        'incorrect values for like_count [{0}] and comment_count [{1}]'.format(
+                            l_comment_likes_s, l_comment_c_count_s))
+
+                # if len(l_comment_date) == 0:
+                #     self.m_logger.warning('No "created_time" in [{0}]'.format(repr(l_comment)))
 
                 # debug display
                 if EcAppParam.gcm_verboseModeOn:
@@ -1396,8 +1440,9 @@ class BulkDownloader:
 
                 self.m_logger.info('PRGMTR-S Posts to be share downloaded: {0}'.format(l_count))
             except Exception as e:
-                self.m_logger.critical('repeat_fetch_shares() Unknown Exception: {0}/{1}'.format(
-                    repr(e), l_cursor.query))
+                self.m_logger.critical(
+                    'repeat_fetch_shares() Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                    extra={'m_errno': 1016})
                 raise BulkDownloaderException('repeat_fetch_shares() Unknown Exception: {0}'.format(repr(e)))
             finally:
                 # close DB access handles when finished
@@ -1408,7 +1453,8 @@ class BulkDownloader:
                 try:
                     self.shares_download()
                 except Exception as e:
-                    self.m_logger.warning('Caught exception in repeat_fetch_shares() loop: ' + repr(e))
+                    self.m_logger.error('Caught exception in repeat_fetch_shares() loop: ' + repr(e),
+                                        extra={'m_errno': 1017})
                 time.sleep(1)
             else:
                 # no posts to update --> wait 5 minutes
@@ -1445,7 +1491,8 @@ class BulkDownloader:
 
             self.m_logger.info('Number of posts to process: {0}'.format(len(l_post_list)))
         except Exception as e:
-            self.m_logger.critical('Shares download Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical(
+                'Shares download Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query), extra={'m_errno': 1018})
             raise BulkDownloaderException('Shares download Unknown Exception: {0}'.format(repr(e)))
         finally:
             # close DB access handles when finished
@@ -1477,7 +1524,8 @@ class BulkDownloader:
                 l_response = self.perform_request(l_request)
             except BulkDownloaderException as e:
                 if str(e) == 'NON_EXIST':
-                    self.m_logger.warning('Post with ID {0} said by FB not to exist (shares)'.format(l_post_id))
+                    self.m_logger.warning('Post with ID {0} said by FB not to exist (shares)'.format(l_post_id),
+                                          extra={'m_errno': 1019})
                     self.set_non_exist(l_post_id)
                     continue
                 else:
@@ -1558,8 +1606,9 @@ class BulkDownloader:
 
                 self.m_logger.info('PRGMTR-U Posts to be updated: {0}'.format(l_count))
             except Exception as e:
-                self.m_logger.critical('repeat_posts_update() Unknown Exception: {0}/{1}'.format(
-                    repr(e), l_cursor.query))
+                self.m_logger.critical(
+                    'repeat_posts_update() Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                    extra={'m_errno': 1020})
                 raise BulkDownloaderException('repeat_posts_update() Unknown Exception: {0}'.format(repr(e)))
             finally:
                 # close DB access handles when finished
@@ -1570,7 +1619,8 @@ class BulkDownloader:
                 try:
                     self.update_posts()
                 except Exception as e:
-                    self.m_logger.warning('Caught exception in repeat_posts_update() loop: ' + repr(e))
+                    self.m_logger.error('Caught exception in repeat_posts_update() loop: ' + repr(e),
+                                        extra={'m_errno': 1021})
                 time.sleep(1)
             else:
                 # no posts to update --> wait 5 minutes
@@ -1617,7 +1667,8 @@ class BulkDownloader:
                 l_post_list.append(l_record)
 
         except Exception as e:
-            self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1022})
             raise BulkDownloaderException('Post Update Unknown Exception: {0}'.format(repr(e)))
         finally:
             # close DB access handles when finished
@@ -1647,7 +1698,8 @@ class BulkDownloader:
                 l_response = self.perform_request(l_request)
             except BulkDownloaderException as e:
                 if str(e) == 'NON_EXIST':
-                    self.m_logger.warning('Post with ID {0} said by FB not to exist (update)'.format(l_post_id))
+                    self.m_logger.warning('Post with ID {0} said by FB not to exist (update)'.format(l_post_id),
+                                          extra={'m_errno': 1023})
                     self.set_non_exist(l_post_id)
                     continue
                 else:
@@ -1761,7 +1813,7 @@ class BulkDownloader:
                 self.m_logger.info('PRGMTR-L posts ready for likes download: {0}'.format(l_count))
             except Exception as e:
                 l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
-                self.m_logger.critical(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1024})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # release DB handles when finished
@@ -1773,7 +1825,8 @@ class BulkDownloader:
                     self.get_likes_detail(p_lock)
                     time.sleep(1)
                 except Exception as e:
-                    self.m_logger.warning(repr(e))
+                    self.m_logger.error('Exception caught in repeat_get_likes_details() loop' + repr(e),
+                                        extra={'m_errno': 1025})
             else:
                 # no likes details to download --> wait 5 minutes
                 time.sleep(5 * 60)
@@ -1824,7 +1877,7 @@ class BulkDownloader:
                 l_total_count = len(l_obj_list)
             except Exception as e:
                 l_msg = 'Likes detail download Unknown Exception (Read) : {0}/{1}'.format(repr(e), l_cursor.query)
-                self.m_logger.critical(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1026})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # release DB handles when finished
@@ -1853,7 +1906,7 @@ class BulkDownloader:
                     l_conn_write.rollback()
                     l_msg0 = 'Likes detail download Unknown Exception (Write) : {0}/{1}'.format(
                         repr(e1), l_cursor_write.query)
-                    self.m_logger.critical(l_msg0)
+                    self.m_logger.critical(l_msg0, extra={'m_errno': 1027})
                     raise BulkDownloaderException(l_msg0)
                 finally:
                     # release DB handles when finished
@@ -1893,7 +1946,8 @@ class BulkDownloader:
             except BulkDownloaderException as e:
                 if str(e) == 'NON_EXIST':
                     self.m_logger.warning(
-                        'Post/comment with ID {0} said by FB not to exist (likes detail)'.format(l_id))
+                        'Post/comment with ID {0} said by FB not to exist (likes detail)'.format(l_id),
+                        extra={'m_errno': 1077})
                     self.set_non_exist(l_id)
                     continue
                 else:
@@ -1989,7 +2043,7 @@ class BulkDownloader:
                 self.m_logger.info('PRGMTR-I Images available for download: {0}'.format(l_count))
             except Exception as e:
                 l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
-                self.m_logger.warning(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1028})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # releases outer DB cursor and connection
@@ -2000,7 +2054,8 @@ class BulkDownloader:
                 try:
                     self.fetch_images()
                 except Exception as e:
-                    self.m_logger.warning('Caught error in repeat_fetch_images() loop: ' + repr(e))
+                    self.m_logger.error('Caught error in repeat_fetch_images() loop: ' + repr(e),
+                                        extra={'m_errno': 1029})
 
                 time.sleep(1)
             else:
@@ -2101,40 +2156,40 @@ class BulkDownloader:
                 # if a HTTP error 404 occurs --> certainty of error
                 if re.search(r'HTTPError 404', repr(e)):
                     l_msg = '[{0}/{1}] Trapped urllib.error.URLError/HTTPError 404: '.format(l_step, l_fmt) + repr(e)
-                    self.m_logger.warning(l_msg)
+                    self.m_logger.warning(l_msg, extra={'m_errno': 1030})
                     l_image_txt = l_msg
                     l_error = True
                     break
                 else:
                     # other type of error --> worth trying again
                     l_msg = '[{0}/{1}] Trapped urllib.error.URLError: '.format(l_step, l_fmt) + repr(e)
-                    self.m_logger.info(l_msg)
+                    self.m_logger.warning(l_msg, extra={'m_errno': 1031})
                     l_image_txt += l_msg + '|'
                     continue
             except socket.timeout as e:
                 # if download timed out --> worth trying again
                 l_msg = '[{0}/{1}] Trapped socket.timeout: '.format(l_step, l_fmt) + repr(e)
-                self.m_logger.info(l_msg)
+                self.m_logger.warning(l_msg, extra={'m_errno': 1032})
                 l_image_txt += l_msg + '|'
                 continue
             except TypeError as e:
                 # ???
                 l_msg = '[{0}/{1}] Trapped TypeError (probably pillow UserWarning: '.format(l_step, l_fmt) +\
                         'Could not allocate palette entry for transparency): ' + repr(e)
-                self.m_logger.warning(l_msg)
+                self.m_logger.warning(l_msg, extra={'m_errno': 1033})
                 l_image_txt = l_msg
                 l_error = True
                 break
             except KeyError as e:
                 # ???
                 l_msg = '[{0}/{1}] Error downloading image: {2}'.format(l_step, l_fmt, repr(e))
-                self.m_logger.warning(l_msg)
+                self.m_logger.warning(l_msg, extra={'m_errno': 1034})
                 l_image_txt = l_msg
                 l_error = True
                 break
             except Exception as e:
                 l_msg = '[{0}/{1}] Unknown error while downloading image: {2}'.format(l_step, l_fmt, repr(e))
-                self.m_logger.warning(l_msg)
+                self.m_logger.warning(l_msg, extra={'m_errno': 1035})
                 l_image_txt = l_msg
                 l_error = True
                 break
@@ -2175,7 +2230,7 @@ class BulkDownloader:
 
         except Exception as e:
             l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
-            self.m_logger.warning(l_msg)
+            self.m_logger.critical(l_msg, extra={'m_errno': 1036})
             raise BulkDownloaderException(l_msg)
         finally:
             # releases outer DB cursor and connection
@@ -2230,7 +2285,7 @@ class BulkDownloader:
             except Exception as e:
                 l_conn_write.rollback()
                 l_msg = 'Error updating TB_MEDIA: {0}'.format(repr(e))
-                self.m_logger.warning(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1037})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # releases write operation DB connection and cursor
@@ -2290,7 +2345,7 @@ class BulkDownloader:
                 self.m_logger.info('PRGMTR-O Images ready for OCR: {0}'.format(l_count))
             except Exception as e:
                 l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
-                self.m_logger.warning(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1038})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # DB handles released after use
@@ -2301,7 +2356,8 @@ class BulkDownloader:
                 try:
                     self.ocr_images(p_lock)
                 except Exception as e:
-                    self.m_logger.warning('Caught Exception in repeat_ocr_image() loop :' + repr(e))
+                    self.m_logger.error('Caught Exception in repeat_ocr_image() loop :' + repr(e),
+                                        extra={'m_errno': 1078})
 
                 time.sleep(1)
             else:
@@ -2320,7 +2376,8 @@ class BulkDownloader:
             with open(l_id_file_name, 'r') as f:
                 l_internal_id = int(f.read())
         except Exception as e:
-            self.m_logger.warning('Could not open [{0}] for reading: {1}'.format(l_id_file_name, repr(e)))
+            l_msg = 'Could not open [{0}] for reading: {1}'.format(l_id_file_name, repr(e))
+            self.m_logger.critical(l_msg, extra={'m_errno': 1039})
 
         if l_internal_id is not None:
             l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.resume_ocr()')
@@ -2349,7 +2406,7 @@ class BulkDownloader:
                 l_conn_write.rollback()
 
                 l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
-                self.m_logger.warning(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1040})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # DB handles released after use
@@ -2442,7 +2499,7 @@ class BulkDownloader:
 
             except Exception as e:
                 l_msg = 'Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query)
-                self.m_logger.warning(l_msg)
+                self.m_logger.critical(l_msg, extra={'m_errno': 1041})
                 raise BulkDownloaderException(l_msg)
             finally:
                 # DB handles released after use
@@ -2468,7 +2525,7 @@ class BulkDownloader:
                     l_conn_write.rollback()
 
                     l_msg = 'Error writing to TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
-                    self.m_logger.warning(l_msg)
+                    self.m_logger.critical(l_msg, extra={'m_errno': 1042})
                     raise BulkDownloaderException(l_msg)
                 finally:
                     # DB handles released after use
@@ -2803,7 +2860,8 @@ class BulkDownloader:
                     if l_debug_messages and len(l_result_list_joh) > 0:
                         display_results(l_result_list_joh, 'joh')
             except Exception as e:
-                self.m_logger.warning('OCR error [{0}] l_internal = {1}'.format(repr(e), l_internal))
+                self.m_logger.error('OCR error [{0}] l_internal = {1}'.format(repr(e), l_internal),
+                                    extra={'m_errno': 1043})
                 self.mark_as_ocred(l_internal)
                 continue
 
@@ -3020,7 +3078,7 @@ class BulkDownloader:
                         '   Headers     :', l_headers_dict,
                         '   Message     :', e.msg,
                         'p_request      :', p_request
-                    )
+                    ), extra={'m_errno': 1053}
                 )
 
                 # Facebook API error
@@ -3043,16 +3101,18 @@ class BulkDownloader:
                             or re.search(r'An unknown error has occurred', l_fb_message):
                         if l_err_count < 3:
                             l_wait = 10
-                            self.m_logger.warning('FB unknown error: {0} --> Waiting for {1} seconds'.format(
-                                l_fb_message, l_wait))
+                            self.m_logger.error(
+                                'FB unknown error: {0} --> Waiting for {1} seconds'.format(l_fb_message, l_wait),
+                                extra={'m_errno': 1044})
 
                             time.sleep(l_wait)
                             # l_request = self.m_browserDriver.renew_token_and_request(l_request)
                         else:
                             l_response = '{"data": []}'
 
-                            self.m_logger.critical('FB unknown error: {0} --> Returned: {1}\n'.format(
-                                l_fb_message, l_response))
+                            self.m_logger.critical(
+                                'FB unknown error: {0} --> Returned: {1}\n'.format(l_fb_message, l_response),
+                                extra={'m_errno': 1045})
 
                             l_finished = True
 
@@ -3063,12 +3123,13 @@ class BulkDownloader:
                             l_expiry_tries += 1
                         else:
                             l_msg = 'FB session expiry msg: {0}'.format(l_fb_message)
-                            self.m_logger.critical(l_msg)
+                            self.m_logger.critical(l_msg, extra={'m_errno': 1046})
                             raise BulkDownloaderException(l_msg)
 
                     # Object does not exist
                     elif re.search(r'Object\s+with\s+ID\s+\'[\d_]+\'\s+does\s+not\s+exist', l_fb_message):
-                        self.m_logger.warning('NON_EXIST Non existent FB object : {0}'.format(l_fb_message))
+                        self.m_logger.warning(
+                            'NON_EXIST Non existent FB object : {0}'.format(l_fb_message), extra={'m_errno': 1047})
 
                         raise BulkDownloaderException('NON_EXIST')
 
@@ -3076,8 +3137,9 @@ class BulkDownloader:
                     elif re.search(r'Unsupported get request', l_fb_message):
                         l_response = '{"data": []}'
 
-                        self.m_logger.warning('FB unsupported get msg: {0} --> Returned: {1}'.format(
-                            l_fb_message, l_response))
+                        self.m_logger.error(
+                            'FB unsupported get msg: {0} --> Returned: {1}'.format(l_fb_message, l_response),
+                            extra={'m_errno': 1048})
 
                         l_finished = True
 
@@ -3089,12 +3151,12 @@ class BulkDownloader:
                         l_new_id = l_match.group(2)
 
                         l_msg = 'Page migrated: {0} --> {1}'.format(l_old_id, l_new_id)
-                        self.m_logger.warning(l_msg)
+                        self.m_logger.warning(l_msg, extra={'m_errno': 1049})
                         raise PageIDMigration(l_msg, l_old_id, l_new_id)
 
                     # Other (unknown) FB error --> critical log msg + raise
                     else:
-                        self.m_logger.critical('FB msg: {0}'.format(l_fb_message))
+                        self.m_logger.critical('FB msg: {0}'.format(l_fb_message), extra={'m_errno': 1050})
                         raise BulkDownloaderException('FB msg: {0}'.format(l_fb_message))
 
                 # Non FB HTTPError: either internet is down and wait 5 min or use get_wait to
@@ -3106,8 +3168,9 @@ class BulkDownloader:
                     else:
                         l_wait = 5 * 60
                         l_msg = 'Internet down'
-                    self.m_logger.warning('Non FB HTTPError {0} ({2}) --> Waiting for {1} seconds'.format(
-                        repr(e), l_wait, l_msg))
+                    self.m_logger.warning(
+                        'Non FB HTTPError {0} ({2}) --> Waiting for {1} seconds'.format(repr(e), l_wait, l_msg),
+                        extra={'m_errno': 1051})
 
                     time.sleep(l_wait)
                     # if l_wait > 60 * 15:
@@ -3123,7 +3186,7 @@ class BulkDownloader:
                     '   Errno       :', e.errno,
                     '   Message     :', e.reason,
                     'p_request      :', p_request
-                ))
+                ), extra={'m_errno': 1052})
 
                 time.sleep(1)
                 l_err_count += 1
@@ -3135,7 +3198,7 @@ class BulkDownloader:
                     'Request Problem:', repr(e),
                     '   Message     :', e.args,
                     'p_request      :', p_request
-                ))
+                ), extra={'m_errno': 1054})
 
                 time.sleep(1)
                 l_err_count += 1
@@ -3166,7 +3229,7 @@ class BulkDownloader:
         elif p_error_count < 21:
             return 60 * 60
         else:
-            self.m_logger.critical('Too many errors: {0}'.format(p_error_count))
+            self.m_logger.critical('Too many errors: {0}'.format(p_error_count), extra={'m_errno': 1055})
             raise BulkDownloaderException('Too many errors: {0}'.format(p_error_count))
 
     def store_object(self,
@@ -3339,7 +3402,8 @@ class BulkDownloader:
             l_conn.rollback()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.warning('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical(
+                'TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query), extra={'m_errno': 1056})
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3380,7 +3444,8 @@ class BulkDownloader:
             l_conn_write.commit()
         except Exception as e:
             l_conn_write.rollback()
-            self.m_logger.warning('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query))
+            self.m_logger.critical('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query),
+                                   extra={'m_errno': 1057})
             raise
         finally:
             # release DB objects once finished
@@ -3412,7 +3477,8 @@ class BulkDownloader:
             l_conn_write.commit()
         except Exception as e:
             l_conn_write.rollback()
-            self.m_logger.warning('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query))
+            self.m_logger.critical('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query),
+                                   extra={'m_errno': 1058})
             raise
         finally:
             # release DB objects once finished
@@ -3433,7 +3499,8 @@ class BulkDownloader:
             for l_internal_id, in l_cursor:
                 pass
         except Exception as e:
-            self.m_logger.warning('Error selecting from TB_OBJ: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('Error selecting from TB_OBJ: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1059})
             raise
         finally:
             # release DB objects once finished
@@ -3442,7 +3509,7 @@ class BulkDownloader:
 
         if l_internal_id is None:
             l_msg = 'Cannot find internal ID of new page just inserted into TB_OBJ - ID: ' + p_new_id
-            self.m_logger.critical(l_msg)
+            self.m_logger.critical(l_msg, extra={'m_errno': 1060})
             raise BulkDownloaderException(l_msg)
 
         l_conn_write = EcConnectionPool.get_global_pool().getconn('BulkDownloader.migrate_id_page() migration 4')
@@ -3470,7 +3537,8 @@ class BulkDownloader:
             l_conn_write.commit()
         except Exception as e:
             l_conn_write.rollback()
-            self.m_logger.warning('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query))
+            self.m_logger.critical('Error updating TB_PAGES: {0}/{1}'.format(repr(e), l_cursor_write.query),
+                                   extra={'m_errno': 1061})
             raise
         finally:
             # release DB objects once finished
@@ -3501,11 +3569,13 @@ class BulkDownloader:
             l_conn.commit()
             l_stored = True
         except psycopg2.IntegrityError as e:
-            self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.error('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query),
+                                extra={'m_errno': 1062})
             l_conn.rollback()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1063})
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3538,11 +3608,13 @@ class BulkDownloader:
             l_conn.commit()
             l_stored = True
         except psycopg2.IntegrityError as e:
-            self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.error('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query),
+                                extra={'m_errno': 1064})
             l_conn.rollback()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1065})
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3564,11 +3636,13 @@ class BulkDownloader:
                 l_conn.commit()
                 l_stored_page = True
             except psycopg2.IntegrityError as e:
-                self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+                self.m_logger.error('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query),
+                                    extra={'m_errno': 1066})
                 l_conn.rollback()
             except Exception as e:
                 l_conn.rollback()
-                self.m_logger.critical('TB_PAGES Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+                self.m_logger.critical('TB_PAGES Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                       extra={'m_errno': 1067})
                 raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
             finally:
                 l_cursor.close()
@@ -3616,11 +3690,13 @@ class BulkDownloader:
             l_conn.commit()
             l_stored = True
         except psycopg2.IntegrityError as e:
-            self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.error('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query),
+                                extra={'m_errno': 1068})
             l_conn.rollback()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1069})
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3684,7 +3760,8 @@ class BulkDownloader:
             l_conn.rollback()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1070})
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3716,7 +3793,8 @@ class BulkDownloader:
                 l_ret_id = l_internal_id
 
         except Exception as e:
-            self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1071})
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3756,7 +3834,8 @@ class BulkDownloader:
                 self.m_logger.info('Like link already exists')
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.critical('TB_LIKE Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_LIKE Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1072})
             raise BulkDownloaderException('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3790,7 +3869,8 @@ class BulkDownloader:
             l_conn.commit()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1073})
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3852,7 +3932,8 @@ class BulkDownloader:
             l_conn.commit()
         except Exception as e:
             l_conn.rollback()
-            self.m_logger.warning('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query),
+                                   extra={'m_errno': 1074})
             raise BulkDownloaderException('TB_MEDIA Unknown Exception: {0}'.format(repr(e)))
         finally:
             l_cursor.close()
@@ -3882,8 +3963,8 @@ class BulkDownloader:
             l_conn_w.commit()
         except Exception as e1:
             l_conn_w.rollback()
-            l_msg0 = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e1), l_cursor_w.query)
-            self.m_logger.warning(l_msg0)
+            l_msg0 = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e1), l_cursor_w.query, extra={'m_errno': 1075})
+            self.m_logger.critical(l_msg0)
             raise BulkDownloaderException(l_msg0)
         finally:
             l_cursor_w.close()
@@ -3916,7 +3997,7 @@ class BulkDownloader:
         except Exception as e:
             l_conn_write.rollback()
             l_msg = 'Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query)
-            self.m_logger.warning(l_msg)
+            self.m_logger.critical(l_msg, extra={'m_errno': 1076})
             raise BulkDownloaderException(l_msg)
         finally:
             l_cursor_write.close()
@@ -3924,12 +4005,34 @@ class BulkDownloader:
 
         self.m_logger.info('update_media_ocr() start')
 
+    def get_mandatory_field(self, p_json, p_field, p_context=''):
+        """
+        Macro to get a mandatory field from an API response.
+
+        :param p_json: The API response JSON fragment
+        :param p_field: The requested field
+        :param p_context: An information string to be included in the error message if any
+        :return: The field contents if present.
+        """
+        l_value = ''
+
+        if p_field in p_json.keys():
+            l_value_raw = p_json[p_field]
+            if type(l_value_raw) is str:
+                l_value = re.sub('\s+', ' ', l_value_raw).strip()
+            else:
+                l_value = l_value_raw
+        else:
+            self.m_logger.error('Missing key [{0}] {1}'.format(p_field, p_context), extra={'m_errno': 1079})
+
+        return l_value
+
     @classmethod
     def get_optional_field(cls, p_json, p_field):
         """
         Macro to get a field from an API response that may or may not be present.
-        
-        :param p_json: The API response JSON fragment 
+
+        :param p_json: The API response JSON fragment
         :param p_field: The requested field
         :return: The field contents if present (full + shortened to 100 char). Empty strings otherwise.
         """
