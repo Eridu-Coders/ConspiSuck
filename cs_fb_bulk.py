@@ -14,7 +14,7 @@ from wrapvpn import *
 
 __author__ = 'Pavan Mahalingam'
 
-# extra={'m_errno': 1079}
+# extra={'m_errno': 1086}
 
 # ----------------------------------- Tesseract -----------------------------------------------------------
 # https://pypi.python.org/pypi/tesserocr
@@ -1205,9 +1205,10 @@ class BulkDownloader:
                         l_width_s = self.get_mandatory_field(l_media['image'], 'width', 'scan_attachments()')
                         l_height_s =self.get_mandatory_field(l_media['image'], 'height', 'scan_attachments()')
 
-                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(l_width_s, l_height_s))
+                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(l_width_s, l_height_s),
+                                              extra={'m_errno': 1081})
                     except KeyError:
-                        self.m_logger.warning('Missing key in: {0}'.format(l_media['image']))
+                        self.m_logger.warning('Missing key in: {0}'.format(l_media['image']), extra={'m_errno': 1082})
                 l_media = json.dumps(l_attachment['media'])
 
             # target link, if any
@@ -1965,14 +1966,14 @@ class BulkDownloader:
                     try:
                         l_liker_id = l_liker['id']
                     except KeyError:
-                        self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker))
+                        self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker), extra={'m_errno': 1083})
                         continue
 
                     # Name of the liker, if any (otherwise skip)
                     try:
                         l_liker_name = l_liker['name']
                     except KeyError:
-                        self.m_logger.warning('No name found in Liker: {0}'.format(l_liker))
+                        self.m_logger.warning('No name found in Liker: {0}'.format(l_liker), extra={'m_errno': 1084})
                         continue
 
                     # Parent object date in string form for database insertion
@@ -2088,7 +2089,7 @@ class BulkDownloader:
                 l_img = (urllib.parse.unquote(l_match.group(1))).split('/')[-1]
                 l_fmt = l_match.group(2)
             else:
-                self.m_logger.warning('Image not found in:' + p_src)
+                self.m_logger.warning('Image not found in:' + p_src, extra={'m_errno': 1080})
                 l_img = '__ConspiSuck_IMG__{0}.png'.format(p_internal)
                 l_fmt = 'png'
 
@@ -2108,7 +2109,7 @@ class BulkDownloader:
             if l_attempts > 10:
                 if self.m_background_task.internet_check():
                     l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
-                    self.m_logger.warning(l_msg)
+                    self.m_logger.warning(l_msg, extra={'m_errno': 1085})
                     l_error = True
                     # l_image_txt will finally contain a succession of error messages + the one below
                     # separated by '|'
@@ -3089,7 +3090,7 @@ class BulkDownloader:
                     if re.search(r'\(#17\) User request limit reached', l_fb_message):
                         l_wait = EcAppParam.gcm_wait_fb
                         self.m_logger.warning('FB request limit msg: {0} --> Waiting for {1} seconds'.format(
-                            l_fb_message, l_wait))
+                            l_fb_message, l_wait), extra={'m_errno': 1086})
 
                         l_sleep_period = 5 * 60
                         for i in range(int(l_wait / l_sleep_period)):
