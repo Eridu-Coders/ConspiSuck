@@ -14,7 +14,7 @@ from wrapvpn import *
 
 __author__ = 'Pavan Mahalingam'
 
-# extra={'m_errno': 1086}
+# extra={'m_errno': 1090}
 
 # ----------------------------------- Tesseract -----------------------------------------------------------
 # https://pypi.python.org/pypi/tesserocr
@@ -101,6 +101,9 @@ class BulkDownloader:
 
         #: Process watchdog thread
         self.m_process_watchdog_thread = None
+
+        #: Main thread
+        self.m_main_thread = None
 
         #: Likes details download Processes
         self.m_likes_details_process = []
@@ -232,8 +235,9 @@ class BulkDownloader:
         :return:
         """
         while True:
-            self.m_logger.info('Process Watchdog')
+            self.m_logger.info('Process and threads Watchdog')
 
+            # Processes
             for l_process_number in range(self.m_ocr_process_count):
                 if self.m_ocr_process[l_process_number].is_alive():
                     self.m_logger.info('Process O{0} is alive'.format(l_process_number))
@@ -245,6 +249,59 @@ class BulkDownloader:
                     p.name = 'O{0}'.format(l_process_number)
                     self.m_ocr_process[l_process_number] = p
                     p.start()
+
+            # Threads
+            if self.m_main_thread is not None:
+                if not self.m_main_thread.is_alive():
+                    self.m_logger.error('Main Bulk Download Thread is dead', extra={'m_errno': 1087})
+                    self.m_main_thread = None
+
+                    self.m_main_thread = Thread(target=self.main_loop())
+                    # One-letter name for the main loop thread
+                    self.m_main_thread.name = 'B'
+                    self.m_main_thread.start()
+                    self.m_logger.info('main loop thread re-launched')
+                else:
+                    self.m_logger.info('Main Bulk Download Thread is alive')
+
+            if self.m_posts_update_thread is not None:
+                if not self.m_posts_update_thread.is_alive():
+                    self.m_logger.error('Posts update thread is dead', extra={'m_errno': 1088})
+                    self.m_posts_update_thread = None
+
+                    self.m_posts_update_thread = Thread(target=self.repeat_posts_update)
+                    # One-letter name for the posts update thread
+                    self.m_posts_update_thread.name = 'U'
+                    self.m_posts_update_thread.start()
+                    self.m_logger.info('Posts update thread re-launched')
+                else:
+                    self.m_logger.info('Posts update Thread is alive')
+
+            if self.m_image_fetch_thread is not None:
+                if not self.m_image_fetch_thread.is_alive():
+                    self.m_logger.error('Image fetch thread is dead', extra={'m_errno': 1089})
+                    self.m_image_fetch_thread = None
+
+                    self.m_image_fetch_thread = Thread(target=self.repeat_fetch_images)
+                    # One-letter name for the Image fetching thread
+                    self.m_image_fetch_thread.name = 'I'
+                    self.m_image_fetch_thread.start()
+                    self.m_logger.info('Image fetch thread re-launched')
+                else:
+                    self.m_logger.info('Image fetch Thread is alive')
+
+            if self.m_shares_fetch_thread is not None:
+                if not self.m_shares_fetch_thread.is_alive():
+                    self.m_logger.error('Shares fetch thread is dead', extra={'m_errno': 1090})
+                    self.m_shares_fetch_thread = None
+
+                    self.m_shares_fetch_thread = Thread(target=self.repeat_fetch_shares)
+                    # One-letter name for the Image fetching thread
+                    self.m_shares_fetch_thread.name = 'S'
+                    self.m_shares_fetch_thread.start()
+                    self.m_logger.info('Shares fetch thread re-launched')
+                else:
+                    self.m_logger.info('Shares fetch Download Thread is alive')
 
             time.sleep(60)
 
@@ -286,6 +343,8 @@ class BulkDownloader:
         self.m_process_watchdog_thread.name = 'w'
         self.m_process_watchdog_thread.start()
         self.m_logger.info('Process watchdog thread launched')
+
+        self.m_main_thread = threading.current_thread()
 
     def new_process_init(self):
         """
@@ -459,6 +518,14 @@ class BulkDownloader:
         with open(l_reboot_path, 'w') as f:
             f.write(datetime.datetime.now().strftime('%Y%m%d'))
 
+        # start main loop
+        self.main_loop()
+
+    def main_loop(self):
+        """
+
+        :return:
+        """
         # ############################################ MAIN LOOP ######################################################
         while True:
             self.m_logger.info('TOPBLK top of bulk_download() main loop')
@@ -1453,6 +1520,8 @@ class BulkDownloader:
             if l_count > 0 and LocalParam.gcm_do_shares:
                 try:
                     self.shares_download()
+                except BulkDownloaderException:
+                    self.m_logger.info('Caught a BulkDownloaderException thrown from below - nothing to do')
                 except Exception as e:
                     self.m_logger.error('Caught exception in repeat_fetch_shares() loop: ' + repr(e),
                                         extra={'m_errno': 1017})
@@ -1619,6 +1688,8 @@ class BulkDownloader:
             if l_count > 0 and LocalParam.gcm_do_update:
                 try:
                     self.update_posts()
+                except BulkDownloaderException:
+                    self.m_logger.info('Caught a BulkDownloaderException thrown from below - nothing to do')
                 except Exception as e:
                     self.m_logger.error('Caught exception in repeat_posts_update() loop: ' + repr(e),
                                         extra={'m_errno': 1021})
@@ -1825,6 +1896,8 @@ class BulkDownloader:
                 try:
                     self.get_likes_detail(p_lock)
                     time.sleep(1)
+                except BulkDownloaderException:
+                    self.m_logger.info('Caught a BulkDownloaderException thrown from below - nothing to do')
                 except Exception as e:
                     self.m_logger.error('Exception caught in repeat_get_likes_details() loop' + repr(e),
                                         extra={'m_errno': 1025})
@@ -2054,6 +2127,8 @@ class BulkDownloader:
             if l_count > 0 and LocalParam.gcm_do_img:
                 try:
                     self.fetch_images()
+                except BulkDownloaderException:
+                    self.m_logger.info('Caught a BulkDownloaderException thrown from below - nothing to do')
                 except Exception as e:
                     self.m_logger.error('Caught error in repeat_fetch_images() loop: ' + repr(e),
                                         extra={'m_errno': 1029})
@@ -2356,6 +2431,8 @@ class BulkDownloader:
             if l_count > 0 and LocalParam.gcm_do_ocr:
                 try:
                     self.ocr_images(p_lock)
+                except BulkDownloaderException:
+                    self.m_logger.info('Caught a BulkDownloaderException thrown from below - nothing to do')
                 except Exception as e:
                     self.m_logger.error('Caught Exception in repeat_ocr_image() loop :' + repr(e),
                                         extra={'m_errno': 1078})
@@ -3157,7 +3234,7 @@ class BulkDownloader:
 
                     # Other (unknown) FB error --> critical log msg + raise
                     else:
-                        self.m_logger.critical('FB msg: {0}'.format(l_fb_message), extra={'m_errno': 1050})
+                        self.m_logger.error('FB msg: {0}'.format(l_fb_message), extra={'m_errno': 1050})
                         raise BulkDownloaderException('FB msg: {0}'.format(l_fb_message))
 
                 # Non FB HTTPError: either internet is down and wait 5 min or use get_wait to

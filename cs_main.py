@@ -143,7 +143,7 @@ class CsBackgroundTask(threading.Thread):
 
         self.m_logger.info('*** FB Sucking set-up complete')
 
-        # Launch one bulk download procedure
+        # Launch the bulk download procedure
         try:
             self.m_bulk.bulk_download()
         except Exception as e:

@@ -306,7 +306,7 @@ class EcLogger(logging.Logger):
 
                 if p_record.levelno >= logging.WARNING:
                     # send mail
-                    if LocalParam.gcm_warningsToMail:
+                    if LocalParam.gcm_warningsToMail or p_record.levelno >= logging.ERROR:
                         EcMailer.send_mail(
                             '{0}-{1}[{2}]/{3}'.format(
                                 p_record.levelname,
@@ -459,7 +459,7 @@ class EcMailer(threading.Thread):
             EcAppParam.gcm_mailSender,
             ', '.join(EcAppParam.gcm_mailRecipients),
             email.utils.format_datetime(datetime.datetime.now(tz=pytz.timezone(EcAppParam.gcm_timeZone))),
-            self.m_subject,
+            '[{0} notification] {1}'.format(EcAppParam.gcm_appName, self.m_subject),
             self.m_message
         )
 
