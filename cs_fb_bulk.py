@@ -519,9 +519,9 @@ class BulkDownloader:
             f.write(datetime.datetime.now().strftime('%Y%m%d'))
 
         # start main loop
-        self.main_loop()
+        self.main_loop(l_reboot_path)
 
-    def main_loop(self):
+    def main_loop(self, p_reboot_path):
         """
 
         :return:
@@ -544,7 +544,7 @@ class BulkDownloader:
             self.m_logger.info('*** RBTEST Reboot Test ***')
             if self.must_reboot:
                 # no more than one reboot per day
-                with open(l_reboot_path, 'r') as f:
+                with open(p_reboot_path, 'r') as f:
                     l_already_rebooted = f.read() == datetime.datetime.now().strftime('%Y%m%d')
 
                 if not l_already_rebooted:
